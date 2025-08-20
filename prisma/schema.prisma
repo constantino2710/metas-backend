@@ -1,0 +1,107 @@
+// ---------- generator & datasource ----------
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- enums ----------
+enum Role {
+  ADMIN
+  CLIENT_ADMIN
+  STORE_MANAGER
+}
+
+enum GoalScope {
+  CLIENT
+  STORE
+  EMPLOYEE
+}
+
+// ---------- models ----------
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String
+  role         Role
+  clientId     String?  @db.Uuid // CLIENT_ADMIN pertence a 1 cliente
+  storeId      String?  @db.Uuid // STORE_MANAGER pertence a 1 loja
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  client Client? @relation("ClientUsers", fields: [clientId], references: [id])
+  store  Store?  @relation("StoreUsers", fields: [storeId], references: [id])
+}
+
+model Client {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  stores Store[]
+  users  User[]  @relation("ClientUsers") // CLIENT_ADMIN(s) desse cliente
+  sales  Sale[] // agregações por cliente
+}
+
+model Store {
+  id        String   @id @default(uuid()) @db.Uuid
+  clientId  String   @db.Uuid
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  client    Client     @relation(fields: [clientId], references: [id])
+  employees Employee[]
+  users     User[]     @relation("StoreUsers") // STORE_MANAGER(s) desta loja
+  sales     Sale[]
+}
+
+model Employee {
+  id        String   @id @default(uuid()) @db.Uuid
+  storeId   String   @db.Uuid
+  fullName  String
+  code      String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  store Store  @relation(fields: [storeId], references: [id])
+  sales Sale[]
+}
+
+model Sale {
+  id         String   @id @default(uuid()) @db.Uuid
+  clientId   String   @db.Uuid
+  storeId    String   @db.Uuid
+  employeeId String   @db.Uuid
+  saleDate   DateTime @db.Date
+  amount     Decimal  @db.Decimal(12, 2)
+  itemsCount Int?
+  note       String?
+  createdBy  String?  @db.Uuid // opcional: user que lançou a venda
+  createdAt  DateTime @default(now())
+
+  client   Client   @relation(fields: [clientId], references: [id])
+  store    Store    @relation(fields: [storeId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([saleDate])
+  @@index([employeeId, saleDate])
+  @@index([storeId, saleDate])
+}
+
+model GoalPolicy {
+  id             String    @id @default(uuid()) @db.Uuid
+  scopeType      GoalScope
+  scopeId        String    @db.Uuid
+  metaDaily      Decimal   @db.Decimal(12, 2)
+  supermetaDaily Decimal   @db.Decimal(12, 2)
+  effectiveFrom  DateTime  @db.Date
+  createdBy      String?   @db.Uuid
+  createdAt      DateTime  @default(now())
+
+  @@index([scopeType, scopeId, effectiveFrom])
+}
