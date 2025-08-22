@@ -1,3 +1,7 @@
+/* eslint-disable @typescript-eslint/no-misused-promises */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 // prisma/seed.ts
 import { PrismaClient, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
@@ -6,11 +10,11 @@ const prisma = new PrismaClient();
 
 // IDs fixos deixam o seed idempotente
 const IDs = {
-  admin:   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-  client:  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-  store:   'cccccccc-cccc-cccc-cccc-cccccccccccc',
-  manager: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
-  emp:     'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  admin: '11111111-1111-4111-8111-111111111111',
+  client: '22222222-2222-4222-8222-222222222222',
+  store: '33333333-3333-4333-8333-333333333333',
+  emp: '44444444-4444-4444-8444-444444444444',
+  manager: '55555555-5555-4555-8555-555555555555',
 };
 
 async function main() {
