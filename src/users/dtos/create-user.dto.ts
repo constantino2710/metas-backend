@@ -1,11 +1,10 @@
+// src/users/dtos/create-user.dto.ts
 /* eslint-disable prettier/prettier */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-import { IsEmail, IsEnum, IsOptional, IsString, IsUUID, MinLength, ValidateIf } from 'class-validator';
+import { IsEmail, IsEnum, IsOptional, IsString, IsUUID, MinLength } from 'class-validator';
 import { Role } from '@prisma/client';
 
 export class CreateUserDto {
-  @IsEmail()
-  email!: string;
+  @IsEmail() email!: string;
 
   @IsString()
   @MinLength(6)
@@ -14,16 +13,13 @@ export class CreateUserDto {
   @IsEnum(Role)
   role!: Role; // 'ADMIN' | 'CLIENT_ADMIN' | 'STORE_MANAGER'
 
-  // Obrigatório para CLIENT_ADMIN e STORE_MANAGER (mas no caso do CLIENT_ADMIN do próprio client,
-  // o service sobrescreve com o clientId do criador)
-  @ValidateIf(o => o.role === 'CLIENT_ADMIN' || o.role === 'STORE_MANAGER')
-  @IsUUID()
+  // Para CLIENT_ADMIN (ADMIN deve informar), ignorado para outros
   @IsOptional()
+  @IsUUID()
   clientId?: string;
 
-  // Obrigatório para STORE_MANAGER
-  @ValidateIf((o) => o.role === 'STORE_MANAGER')
-  @IsUUID()
+  // Para STORE_MANAGER (ADMIN/CLIENT_ADMIN devem informar)
   @IsOptional()
+  @IsUUID()
   storeId?: string;
 }
