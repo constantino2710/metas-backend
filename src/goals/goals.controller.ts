@@ -1,5 +1,7 @@
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable prettier/prettier */
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../rbac/roles.guard';
@@ -8,6 +10,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import * as types from '../auth/types';
 import { GoalsService } from './goals.service';
 import { GoalsEffectiveQueryDto } from './dtos/goals-effective.query.dto';
+import { CreateGoalDto } from './dtos/create-goal.dto';
 
 @ApiTags('goals')
 @ApiBearerAuth()
@@ -16,13 +19,17 @@ import { GoalsEffectiveQueryDto } from './dtos/goals-effective.query.dto';
 export class GoalsController {
   constructor(private readonly goals: GoalsService) {}
 
-  // GET /goals/effective?date=YYYY-MM-DD&clientId|storeId|employeeId=...
   @Get('effective')
   @Roles('ADMIN', 'CLIENT_ADMIN', 'STORE_MANAGER')
-  effective(
-    @CurrentUser() user: types.JwtUser,
-    @Query() q: GoalsEffectiveQueryDto,
-  ) {
+  effective(@CurrentUser() user: types.JwtUser, @Query() q: GoalsEffectiveQueryDto) {
     return this.goals.effective(user, q);
+  }
+
+  // 👇 Novo: cadastra/atualiza meta; calcula super meta automaticamente se não for enviada
+  @Post()
+  @Roles('ADMIN', 'CLIENT_ADMIN') // gerente de loja geralmente não define política
+  create(@CurrentUser() user: types.JwtUser, @Body() dto: CreateGoalDto) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+    return this.goals.create(user, dto);
   }
 }

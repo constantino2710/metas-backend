@@ -7,4 +7,6 @@ export class CreateSaleDto {
   @IsNumber() @Min(0) amount!: number;
   @IsOptional() @IsInt() @Min(0) itemsCount?: number;
   @IsOptional() note?: string;
+  id: any;
+  storeId: any;
 }

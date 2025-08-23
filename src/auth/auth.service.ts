@@ -29,6 +29,7 @@ export class AuthService {
       role: user.role as JwtUser['role'],
       clientId: user.clientId ?? undefined,
       storeId: user.storeId ?? undefined,
+      id: undefined
     };
     return this.jwt.sign(payload, {
       secret: this.cfg.get<string>('JWT_SECRET'),

@@ -1,58 +1,35 @@
+/* eslint-disable prettier/prettier */
+/* eslint-disable @typescript-eslint/require-await */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-// src/auth/strategies/jwt.strategy.ts
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { ConfigService } from '@nestjs/config';
-import { PrismaService } from '../../database/prisma.service';
-import { JwtUser } from '../types';
-
-type AccessTokenPayload = JwtUser; // mesmo shape que você assina no access token
+import * as types from '../types';
 
 @Injectable()
-export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
-  constructor(
-    private readonly config: ConfigService,
-    private readonly prisma: PrismaService,
-  ) {
-    const secret = config.get<string>('JWT_SECRET') ?? process.env.JWT_SECRET;
-    if (!secret) {
-      throw new Error('JWT_SECRET ausente. Defina no .env');
-    }
-
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor() {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: secret,
+      secretOrKey: process.env.JWT_SECRET!, // defina JWT_SECRET no .env
     });
   }
 
-  async validate(payload: AccessTokenPayload): Promise<JwtUser> {
-    // Revalida usuário no banco (existência/ativo) e retorna o objeto que vai em req.user
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.sub },
-      select: {
-        id: true,
-        email: true,
-        role: true,
-        clientId: true,
-        storeId: true,
-        isActive: true,
-      },
-    });
-
-    if (!user || !user.isActive) {
-      throw new UnauthorizedException('User inactive or not found');
-    }
-
+  /**
+   * Converte o payload do token (que traz `sub`) para o objeto JwtUser esperado
+   * pelos guards (@CurrentUser etc.), com `id`.
+   */
+  async validate(payload: any): Promise<types.JwtUser> {
     return {
-      sub: user.id,
-      email: user.email, // preferir o valor do DB
-      role: user.role as JwtUser['role'],
-      clientId: user.clientId ?? undefined,
-      storeId: user.storeId ?? undefined,
+      id: payload.sub ?? payload.id,   // ← MAPEIA sub → id
+      sub: payload.sub,                // adiciona o campo sub
+      email: payload.email,
+      role: payload.role,
+      clientId: payload.clientId,
+      storeId: payload.storeId,
     };
   }
 }

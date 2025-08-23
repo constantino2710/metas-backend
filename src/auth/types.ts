@@ -1,4 +1,5 @@
 export type JwtUser = {
+  id: any;
   sub: string;
   email: string;
   role: 'ADMIN' | 'CLIENT_ADMIN' | 'STORE_MANAGER';
