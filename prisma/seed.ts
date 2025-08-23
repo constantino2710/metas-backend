@@ -1,107 +1,75 @@
 /* eslint-disable @typescript-eslint/no-misused-promises */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-// prisma/seed.ts
-import { PrismaClient, Role } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
-
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable prettier/prettier */
+import { PrismaClient, Prisma } from '@prisma/client';
 const prisma = new PrismaClient();
 
-// IDs fixos deixam o seed idempotente
-const IDs = {
-  admin: '11111111-1111-4111-8111-111111111111',
-  client: '22222222-2222-4222-8222-222222222222',
-  store: '33333333-3333-4333-8333-333333333333',
-  emp: '44444444-4444-4444-8444-444444444444',
-  manager: '55555555-5555-4555-8555-555555555555',
-};
+const asDate = (y:number,m:number,d:number) => new Date(Date.UTC(y, m, d));
 
 async function main() {
-  // ADMIN
-  await prisma.user.upsert({
-    where: { email: 'admin@demo.com' },
+  const today = new Date();
+  const y = today.getUTCFullYear();
+  const m = today.getUTCMonth();
+
+  const client = await prisma.client.upsert({
+    where: { id: '11111111-1111-4111-8111-111111111111' },
     update: {},
-    create: {
-      id: IDs.admin,
-      email: 'admin@demo.com',
-      passwordHash: await bcrypt.hash('admin123', 10),
-      role: 'ADMIN' as Role,
-    },
+    create: { id: '11111111-1111-4111-8111-111111111111', name: 'Cliente Demo' },
   });
 
-  // CLIENTE
-  await prisma.client.upsert({
-    where: { id: IDs.client },
-    update: { name: 'Cliente Demo' },
-    create: { id: IDs.client, name: 'Cliente Demo' },
+  const lojaA = await prisma.store.upsert({
+    where: { id: '22222222-2222-4222-8222-222222222221' },
+    update: {},
+    create: { id: '22222222-2222-4222-8222-222222222221', name: 'Loja A', clientId: client.id },
+  });
+  const lojaB = await prisma.store.upsert({
+    where: { id: '22222222-2222-4222-8222-222222222222' },
+    update: {},
+    create: { id: '22222222-2222-4222-8222-222222222222', name: 'Loja B', clientId: client.id },
   });
 
-  // LOJA
-  await prisma.store.upsert({
-    where: { id: IDs.store },
-    update: { name: 'Loja Centro', clientId: IDs.client },
-    create: { id: IDs.store, name: 'Loja Centro', clientId: IDs.client },
+  const [ana, bruno, carla] = await Promise.all([
+    prisma.employee.upsert({ where: { id: '33333333-3333-4333-8333-333333333331' }, update: {}, create: { id: '33333333-3333-4333-8333-333333333331', storeId: lojaA.id, fullName: 'Ana' } }),
+    prisma.employee.upsert({ where: { id: '33333333-3333-4333-8333-333333333332' }, update: {}, create: { id: '33333333-3333-4333-8333-333333333332', storeId: lojaA.id, fullName: 'Bruno' } }),
+    prisma.employee.upsert({ where: { id: '33333333-3333-4333-8333-333333333333' }, update: {}, create: { id: '33333333-3333-4333-8333-333333333333', storeId: lojaA.id, fullName: 'Carla' } }),
+  ]);
+  const [davi, eva, fabio] = await Promise.all([
+    prisma.employee.upsert({ where: { id: '33333333-3333-4333-8333-333333333334' }, update: {}, create: { id: '33333333-3333-4333-8333-333333333334', storeId: lojaB.id, fullName: 'Davi' } }),
+    prisma.employee.upsert({ where: { id: '33333333-3333-4333-8333-333333333335' }, update: {}, create: { id: '33333333-3333-4333-8333-333333333335', storeId: lojaB.id, fullName: 'Eva' } }),
+    prisma.employee.upsert({ where: { id: '33333333-3333-4333-8333-333333333336' }, update: {}, create: { id: '33333333-3333-4333-8333-333333333336', storeId: lojaB.id, fullName: 'Fábio' } }),
+  ]);
+
+  // metas por loja
+  await prisma.goalPolicy.upsert({
+    where: { id: '44444444-4444-4444-8444-444444444441' },
+    update: {},
+    create: { id: '44444444-4444-4444-8444-444444444441', scopeType: 'STORE', scopeId: lojaA.id, metaDaily: new Prisma.Decimal(500), supermetaDaily: new Prisma.Decimal(800), effectiveFrom: asDate(y, m-1, 1) },
+  });
+  await prisma.goalPolicy.upsert({
+    where: { id: '44444444-4444-4444-8444-444444444442' },
+    update: {},
+    create: { id: '44444444-4444-4444-8444-444444444442', scopeType: 'STORE', scopeId: lojaB.id, metaDaily: new Prisma.Decimal(400), supermetaDaily: new Prisma.Decimal(700), effectiveFrom: asDate(y, m-1, 1) },
   });
 
-  // STORE_MANAGER
-  await prisma.user.upsert({
-    where: { email: 'gerente@demo.com' },
-    update: {
-      role: 'STORE_MANAGER',
-      clientId: IDs.client,
-      storeId: IDs.store,
-      // manter a senha se já existir; se quiser trocar, descomente a linha abaixo
-      // passwordHash: await bcrypt.hash('gerente123', 10),
-    },
-    create: {
-      id: IDs.manager,
-      email: 'gerente@demo.com',
-      passwordHash: await bcrypt.hash('gerente123', 10),
-      role: 'STORE_MANAGER',
-      clientId: IDs.client,
-      storeId: IDs.store,
-    },
-  });
-
-  // FUNCIONÁRIO (sem login)
-  await prisma.employee.upsert({
-    where: { id: IDs.emp },
-    update: { fullName: 'Maria Vendedora', storeId: IDs.store },
-    create: { id: IDs.emp, fullName: 'Maria Vendedora', storeId: IDs.store },
-  });
-
-  // Venda de hoje (evita duplicar)
-  const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const today = new Date(todayStr);
-
-  const exists = await prisma.sale.findFirst({
-    where: { employeeId: IDs.emp, saleDate: today },
-  });
-
-  if (!exists) {
-    await prisma.sale.create({
+  // algumas vendas no mês
+  const mkSale = (storeId:string, empId:string, day:number, amt:number) =>
+    prisma.sale.create({
       data: {
-        id: undefined, // deixa o Prisma gerar
-        clientId: IDs.client,
-        storeId: IDs.store,
-        employeeId: IDs.emp,
-        saleDate: today,
-        amount: 500,
-        itemsCount: 3,
-        createdBy: IDs.admin,
+        id: crypto.randomUUID(),
+        clientId: client.id,
+        storeId,
+        employeeId: empId,
+        saleDate: asDate(y, m, day),
+        amount: new Prisma.Decimal(amt),
       },
     });
-  }
 
-  console.log('✅ Seed ok');
+  await Promise.all([
+    mkSale(lojaA.id, ana.id,   1, 300),
+    mkSale(lojaA.id, ana.id,   3, 900),
+    mkSale(lojaA.id, bruno.id, 2, 200),
+    mkSale(lojaB.id, davi.id,  5, 450),
+  ]);
 }
 
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+main().finally(()=>prisma.$disconnect());
