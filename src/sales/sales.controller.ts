@@ -11,10 +11,9 @@ import * as types from '../auth/types';
 import { SalesService } from './sales.service';
 import { CreateSaleDto } from './dtos/create-sale.dto';
 import { SalesListQueryDto } from './dtos/sales-list.query.dto';
-import { Sale } from '@prisma/client';
-
-// ⬇⬇ novo
 import { SalesDailyQueryDto } from './dtos/sales-daily.query.dto';
+import { SalesSetDailyDto } from './dtos/sales-set-daily.dto';
+import { Sale } from '@prisma/client';
 
 @ApiTags('sales')
 @ApiBearerAuth()
@@ -35,10 +34,15 @@ export class SalesController {
     return this.sales.create(user, dto);
   }
 
-  // ⬇⬇ novo: dados diários (para a “planilha” de quadradinhos)
   @Get('daily')
   @Roles('ADMIN', 'CLIENT_ADMIN', 'STORE_MANAGER')
   daily(@CurrentUser() user: types.JwtUser, @Query() q: SalesDailyQueryDto) {
     return this.sales.daily(user, q);
+  }
+
+  @Post('set-daily')
+  @Roles('ADMIN', 'CLIENT_ADMIN', 'STORE_MANAGER')
+  setDaily(@CurrentUser() user: types.JwtUser, @Body() dto: SalesSetDailyDto) {
+    return this.sales.setDailyTotal(user, dto);
   }
 }

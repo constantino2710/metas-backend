@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
@@ -9,28 +9,26 @@ import { Sale } from '@prisma/client';
 import { SalesListQueryDto } from './dtos/sales-list.query.dto';
 import { CreateSaleDto } from './dtos/create-sale.dto';
 import { SalesDailyQueryDto, SalesDailyScope } from './dtos/sales-daily.query.dto';
+import { randomUUID } from 'crypto';
+import { SalesSetDailyDto } from './dtos/sales-set-daily.dto';
 
 @Injectable()
 export class SalesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Lista de vendas com RBAC aplicado.
-   */
+  // ------------------------------- LIST -------------------------------
   async list(user: types.JwtUser, q: SalesListQueryDto): Promise<Sale[]> {
-    // RBAC básico
     const where: any = {};
     if (user.role === 'ADMIN') {
       // sem restrição
     } else if (user.role === 'CLIENT_ADMIN') {
-      where.clientId = (user as any).clientId;
+      where.clientId = user.clientId;
     } else if (user.role === 'STORE_MANAGER') {
-      where.storeId = (user as any).storeId;
+      where.storeId = user.storeId;
     } else {
       throw new ForbiddenException();
     }
 
-    // filtros opcionais
     if (q.clientId) where.clientId = q.clientId;
     if (q.storeId) where.storeId = q.storeId;
     if (q.employeeId) where.employeeId = q.employeeId;
@@ -47,42 +45,43 @@ export class SalesService {
     });
   }
 
-  /**
-   * Criação de venda com validações simples.
-   */
+  // ------------------------------ CREATE ------------------------------
   async create(user: types.JwtUser, dto: CreateSaleDto): Promise<Sale> {
     if (!['ADMIN', 'CLIENT_ADMIN', 'STORE_MANAGER'].includes(user.role)) {
       throw new ForbiddenException();
     }
 
-    const store = await this.prisma.store.findUnique({
-      where: { id: dto.storeId },
-      select: { id: true, clientId: true, isActive: true },
-    });
-    if (!store || !store.isActive) throw new NotFoundException('Loja não encontrada');
-
-    if (user.role === 'CLIENT_ADMIN' && store.clientId !== (user as any).clientId) {
-      throw new ForbiddenException('Loja fora do seu escopo');
-    }
-    if (user.role === 'STORE_MANAGER' && (user as any).storeId !== store.id) {
-      throw new ForbiddenException('Loja fora do seu escopo');
-    }
-
+    // Carrega funcionário e sua loja
     const emp = await this.prisma.employee.findUnique({
       where: { id: dto.employeeId },
-      select: { id: true, storeId: true, isActive: true },
+      select: {
+        id: true,
+        storeId: true,
+        isActive: true,
+        store: { select: { id: true, clientId: true, isActive: true } },
+      },
     });
-    if (!emp || !emp.isActive || emp.storeId !== store.id) {
-      throw new ForbiddenException('Funcionário inválido para a loja');
+
+    if (!emp || !emp.isActive || !emp.store?.isActive) {
+      throw new ForbiddenException('Funcionário/loja inválidos ou inativos');
+    }
+
+    // RBAC por escopo
+    if (user.role === 'CLIENT_ADMIN' && emp.store.clientId !== user.clientId) {
+      throw new ForbiddenException('Loja fora do seu escopo');
+    }
+    if (user.role === 'STORE_MANAGER' && emp.store.id !== user.storeId) {
+      throw new ForbiddenException('Loja fora do seu escopo');
     }
 
     const createdBy = (user as any).id ?? (user as any).sub ?? undefined;
+    const saleId = randomUUID(); // Sale.id não tem default → geramos aqui
 
     return this.prisma.sale.create({
       data: {
-        id: dto.id, // remova esta linha se o ID for gerado pelo banco
-        clientId: store.clientId,
-        storeId: store.id,
+        id: saleId,
+        clientId: emp.store.clientId,
+        storeId: emp.storeId,
         employeeId: emp.id,
         saleDate: new Date(String(dto.saleDate)),
         amount: Number(dto.amount),
@@ -93,11 +92,7 @@ export class SalesService {
     });
   }
 
-  /**
-   * Série diária agregada por CLIENTE (linhas=lojas),
-   * por LOJA (linhas=funcionários) ou por FUNCIONÁRIO (uma linha).
-   * Inclui metas, supermetas, projeção e totais por dia.
-   */
+  // ------------------------------- DAILY ------------------------------
   async daily(user: types.JwtUser, q: SalesDailyQueryDto): Promise<any> {
     await this.assertDailyScope(user, q);
 
@@ -125,7 +120,6 @@ export class SalesService {
       groupScope = 'EMPLOYEE';
     }
 
-    // ---- vendas por dia / linha
     const sql = `
       SELECT
         (date_trunc('day', "saleDate")::date)::text AS d,
@@ -140,7 +134,7 @@ export class SalesService {
     const rowsRaw: Array<{ d: string; group_id: string; value: number }> =
       await this.prisma.$queryRawUnsafe(sql, q.id, start, end);
 
-    // ---- eixo de dias
+    // eixo de dias
     const days: string[] = [];
     for (let d = new Date(startD); d <= endD; d.setUTCDate(d.getUTCDate() + 1)) {
       days.push(d.toISOString().slice(0, 10));
@@ -148,7 +142,7 @@ export class SalesService {
     const totalDays = days.length;
     const idx = new Map(days.map((d, i) => [d, i]));
 
-    // ---- séries por linha
+    // séries
     const series = new Map<string, number[]>();
     for (const r of rowsRaw) {
       if (!series.has(r.group_id)) series.set(r.group_id, Array(totalDays).fill(0));
@@ -156,7 +150,7 @@ export class SalesService {
       if (i !== undefined) series.get(r.group_id)![i] += Number(r.value || 0);
     }
 
-    // ---- labels das linhas
+    // labels
     let labels: Record<string, string> = {};
     if (q.scope === SalesDailyScope.CLIENT) {
       const stores = await this.prisma.store.findMany({
@@ -178,17 +172,16 @@ export class SalesService {
       if (emp) labels[emp.id] = emp.fullName;
     }
 
-    // ---- garante linhas zeradas para quem não teve venda
+    // garante linhas zeradas
     for (const gid of Object.keys(labels)) {
       if (!series.has(gid)) series.set(gid, Array(totalDays).fill(0));
     }
 
-    // ---- metas por linha (vigentes no início do período)
+    // metas (vigentes no início)
     const startPolicyDate = startD;
     const groupIds = Object.keys(labels);
 
-    // NOVO: quando estamos em scope=STORE (linhas = funcionários),
-    // buscamos UMA VEZ a meta da LOJA e usamos como HERANÇA
+    // herança de meta de LOJA para linhas (funcionário) quando scope=STORE
     let storePolicyForEmployeeRows: { metaDaily?: number; superDaily?: number } | null = null;
     if (q.scope === SalesDailyScope.STORE) {
       const storePol = await this.prisma.goalPolicy.findFirst({
@@ -223,7 +216,6 @@ export class SalesService {
             superDaily: Number(storePol.supermetaDaily),
           };
         } else {
-          // fallback: soma metas de funcionários (mantido por compatibilidade)
           policies[gid] = await this.sumEmployeeGoalsForStore(gid, startPolicyDate);
         }
       } else {
@@ -239,7 +231,6 @@ export class SalesService {
             superDaily: Number(empPol.supermetaDaily),
           };
         } else if (storePolicyForEmployeeRows) {
-          // HERANÇA: se o funcionário não tem meta própria, usa a meta da LOJA
           policies[gid] = { ...storePolicyForEmployeeRows };
         } else {
           policies[gid] = { metaDaily: undefined, superDaily: undefined };
@@ -247,9 +238,8 @@ export class SalesService {
       }
     }
 
-    // ---- dias decorridos (clamp hoje)
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    // dias decorridos (clamp hoje)
+    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
     const startMs = startD.getTime();
     const endMs = endD.getTime();
     const clampTo = Math.min(today.getTime(), endMs);
@@ -258,7 +248,7 @@ export class SalesService {
       Math.max(0, Math.floor((clampTo - startMs) / 86_400_000) + 1),
     );
 
-    // ---- monta linhas
+    // linhas
     const rows = groupIds.map((gid) => {
       const values = series.get(gid)!;
       const total = values.reduce((a, b) => a + (Number(b) || 0), 0);
@@ -297,15 +287,77 @@ export class SalesService {
     };
   }
 
-  /**
-   * RBAC para /sales/daily
-   */
+  // ---------------------------- SET DAILY TOTAL -----------------------
+  async setDailyTotal(user: types.JwtUser, dto: SalesSetDailyDto) {
+    if (!['ADMIN','CLIENT_ADMIN','STORE_MANAGER'].includes(user.role)) {
+      throw new ForbiddenException();
+    }
+
+    // Carrega funcionário + loja
+    const emp = await this.prisma.employee.findUnique({
+      where: { id: dto.employeeId },
+      select: {
+        id: true,
+        isActive: true,
+        storeId: true,
+        store: { select: { id: true, clientId: true, isActive: true } },
+      },
+    });
+    if (!emp || !emp.isActive || !emp.store?.isActive) {
+      throw new NotFoundException('Funcionário/loja inválidos');
+    }
+
+    // RBAC
+    if (user.role === 'CLIENT_ADMIN' && emp.store.clientId !== user.clientId) {
+      throw new ForbiddenException('Fora do seu escopo');
+    }
+    if (user.role === 'STORE_MANAGER' && emp.store.id !== user.storeId) {
+      throw new ForbiddenException('Fora do seu escopo');
+    }
+
+    // intervalo do dia [00:00, 24:00)
+    const day = new Date(dto.saleDate + 'T00:00:00.000Z');
+    const next = new Date(day); next.setUTCDate(next.getUTCDate() + 1);
+
+    // total atual do dia
+    const agg = await this.prisma.sale.aggregate({
+      _sum: { amount: true },
+      where: { employeeId: emp.id, saleDate: { gte: day, lt: next } },
+    });
+    const currentTotal = Number(agg._sum.amount ?? 0);
+    const desired = Number(dto.amount);
+    const delta = +(desired - currentTotal).toFixed(2);
+
+    if (Math.abs(delta) < 0.00001) {
+      return { employeeId: emp.id, saleDate: dto.saleDate, total: currentTotal, changed: false };
+    }
+
+    const createdBy = (user as any).id ?? (user as any).sub ?? undefined;
+
+    await this.prisma.sale.create({
+      data: {
+        id: randomUUID(),
+        clientId: emp.store.clientId,
+        storeId: emp.storeId,
+        employeeId: emp.id,
+        saleDate: day,
+        amount: delta,
+        itemsCount: null,
+        note: `AJUSTE: set-daily para ${desired}`,
+        createdBy,
+      },
+    });
+
+    return { employeeId: emp.id, saleDate: dto.saleDate, total: desired, changed: true };
+  }
+
+  // ------------------------------- HELPERS ----------------------------
   private async assertDailyScope(user: types.JwtUser, q: SalesDailyQueryDto) {
     if (user.role === 'ADMIN') return;
 
     if (q.scope === SalesDailyScope.CLIENT) {
       if (user.role !== 'CLIENT_ADMIN') throw new ForbiddenException();
-      if ((user as any).clientId !== q.id) throw new ForbiddenException('Cliente fora do seu escopo');
+      if (user.clientId !== q.id) throw new ForbiddenException('Cliente fora do seu escopo');
       return;
     }
 
@@ -315,13 +367,11 @@ export class SalesService {
           where: { id: q.id },
           select: { clientId: true },
         });
-        if (!store || store.clientId !== (user as any).clientId) {
-          throw new ForbiddenException('Loja fora do seu escopo');
-        }
+        if (!store || store.clientId !== user.clientId) throw new ForbiddenException('Loja fora do seu escopo');
         return;
       }
       if (user.role === 'STORE_MANAGER') {
-        if ((user as any).storeId !== q.id) throw new ForbiddenException('Loja fora do seu escopo');
+        if (user.storeId !== q.id) throw new ForbiddenException('Loja fora do seu escopo');
         return;
       }
     }
@@ -332,22 +382,14 @@ export class SalesService {
         select: { store: { select: { id: true, clientId: true } } },
       });
       if (!emp) throw new ForbiddenException();
-      if (user.role === 'CLIENT_ADMIN' && emp.store.clientId !== (user as any).clientId) {
-        throw new ForbiddenException();
-      }
-      if (user.role === 'STORE_MANAGER' && emp.store.id !== (user as any).storeId) {
-        throw new ForbiddenException();
-      }
+      if (user.role === 'CLIENT_ADMIN' && emp.store.clientId !== user.clientId) throw new ForbiddenException();
+      if (user.role === 'STORE_MANAGER' && emp.store.id !== user.storeId) throw new ForbiddenException();
       return;
     }
 
     throw new ForbiddenException();
   }
 
-  /**
-   * (Compat) Soma metas dos funcionários ativos de uma loja, vigentes em `asOf`.
-   * Mantido para cenários onde não exista meta de LOJA cadastrada.
-   */
   private async sumEmployeeGoalsForStore(
     storeId: string,
     asOf: Date,
@@ -363,11 +405,7 @@ export class SalesService {
 
     for (const e of emps) {
       const pol = await this.prisma.goalPolicy.findFirst({
-        where: {
-          scopeType: 'EMPLOYEE',
-          scopeId: e.id,
-          effectiveFrom: { lte: asOf },
-        },
+        where: { scopeType: 'EMPLOYEE', scopeId: e.id, effectiveFrom: { lte: asOf } },
         orderBy: { effectiveFrom: 'desc' },
         select: { metaDaily: true, supermetaDaily: true },
       });
