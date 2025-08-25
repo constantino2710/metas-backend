@@ -4,8 +4,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 // ---------- enums ----------
@@ -27,13 +28,13 @@ model User {
   email        String   @unique
   passwordHash String
   role         Role
-  clientId     String?  @db.Uuid // CLIENT_ADMIN pertence a 1 cliente
-  storeId      String?  @db.Uuid // STORE_MANAGER pertence a 1 loja
-  isActive     Boolean  @default(true)
+  clientId     String?  @db.Uuid
+  storeId      String?  @db.Uuid
+  fullName     String? // <- manter
+  isActive     Boolean  @default(true) // <- manter
+  client       Client?  @relation("ClientUsers", fields: [clientId], references: [id], onDelete: SetNull)
+  store        Store?   @relation("StoreUsers", fields: [storeId], references: [id], onDelete: SetNull)
   createdAt    DateTime @default(now())
-
-  client Client? @relation("ClientUsers", fields: [clientId], references: [id])
-  store  Store?  @relation("StoreUsers", fields: [storeId], references: [id])
 }
 
 model Client {

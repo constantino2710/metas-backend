@@ -11,9 +11,9 @@ import * as types from '../auth/types';
 import { SalesService } from './sales.service';
 import { CreateSaleDto } from './dtos/create-sale.dto';
 import { SalesListQueryDto } from './dtos/sales-list.query.dto';
-import { SalesDailyQueryDto } from './dtos/sales-daily.query.dto';
-import { SalesSetDailyDto } from './dtos/sales-set-daily.dto';
 import { Sale } from '@prisma/client';
+import { SalesDailyQueryDto } from './dtos/sales-daily.query.dto';
+import { SetDailyDto } from './dtos/set-daily.dto';
 
 @ApiTags('sales')
 @ApiBearerAuth()
@@ -34,15 +34,17 @@ export class SalesController {
     return this.sales.create(user, dto);
   }
 
+  // ← GRID por período
   @Get('daily')
   @Roles('ADMIN', 'CLIENT_ADMIN', 'STORE_MANAGER')
   daily(@CurrentUser() user: types.JwtUser, @Query() q: SalesDailyQueryDto) {
     return this.sales.daily(user, q);
   }
 
+  // ← edição inline de um dia (grid)
   @Post('set-daily')
   @Roles('ADMIN', 'CLIENT_ADMIN', 'STORE_MANAGER')
-  setDaily(@CurrentUser() user: types.JwtUser, @Body() dto: SalesSetDailyDto) {
-    return this.sales.setDailyTotal(user, dto);
+  setDaily(@CurrentUser() user: types.JwtUser, @Body() dto: SetDailyDto) {
+    return this.sales.setDaily(user, dto);
   }
 }

@@ -1,26 +1,31 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsISO8601, IsUUID } from 'class-validator';
+import { IsEnum, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export enum SalesDailyScope {
-  CLIENT = 'client',
-  STORE = 'store',
-  EMPLOYEE = 'employee',
+  SYSTEM = 'SYSTEM',
+  CLIENT = 'CLIENT',
+  STORE = 'STORE',
+  EMPLOYEE = 'EMPLOYEE',
 }
 
 export class SalesDailyQueryDto {
-  @ApiProperty({ enum: SalesDailyScope })
+  // Normaliza para MAIÚSCULAS (ex.: "system" -> "SYSTEM")
+  @Transform(({ value }) => String(value).toUpperCase())
   @IsEnum(SalesDailyScope)
   scope!: SalesDailyScope;
 
-  @ApiProperty({ example: '22222222-2222-4222-8222-222222222221' })
+  // obrigatório para CLIENT/STORE/EMPLOYEE
+  @IsOptional()
   @IsUUID()
-  id!: string; // clientId | storeId | employeeId (depende do scope)
+  id?: string;
 
-  @ApiProperty({ example: '2025-08-01' })
-  @IsISO8601()
-  start!: string; // YYYY-MM-DD
+  // YYYY-MM-DD
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  start!: string;
 
-  @ApiProperty({ example: '2025-08-31' })
-  @IsISO8601()
-  end!: string; // YYYY-MM-DD
+  // YYYY-MM-DD
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  end!: string;
 }

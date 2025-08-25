@@ -12,6 +12,7 @@ CREATE TABLE "public"."User" (
     "role" "public"."Role" NOT NULL,
     "clientId" UUID,
     "storeId" UUID,
+    "fullName" TEXT,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
