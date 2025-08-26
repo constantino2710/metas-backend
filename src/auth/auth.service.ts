@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
@@ -70,7 +71,14 @@ export class AuthService {
     return {
       accessToken,
       refreshToken,
-      user: { id: user.id, email: user.email, role: user.role, clientId: user.clientId, storeId: user.storeId },
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        clientId: user.clientId ?? undefined,
+        storeId: user.storeId ?? undefined,
+      },
+
     };
   }
 

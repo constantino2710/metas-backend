@@ -20,7 +20,7 @@ export class TenantsController {
 
   // ----- Clients -----
   @Get('clients')
-  @Roles('ADMIN', 'CLIENT_ADMIN')
+  @Roles('ADMIN')
   listClients(@CurrentUser() user: JwtUser) {
     return this.tenants.listClients(user);
   }
