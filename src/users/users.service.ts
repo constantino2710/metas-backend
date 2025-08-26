@@ -70,6 +70,7 @@ export class UsersService {
         email,
         passwordHash,
         role: dto.role,
+        fullName: dto.fullName ?? undefined,   // opcional
         clientId: clientId ?? undefined,
         storeId: storeId ?? undefined,
       },

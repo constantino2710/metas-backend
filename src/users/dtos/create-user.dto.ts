@@ -4,7 +4,8 @@ import { IsEmail, IsEnum, IsOptional, IsString, IsUUID, MinLength } from 'class-
 import { Role } from '@prisma/client';
 
 export class CreateUserDto {
-  @IsEmail() email!: string;
+  @IsEmail()
+  email!: string;
 
   @IsString()
   @MinLength(6)
@@ -13,9 +14,10 @@ export class CreateUserDto {
   @IsEnum(Role)
   role!: Role; // 'ADMIN' | 'CLIENT_ADMIN' | 'STORE_MANAGER'
 
+  @IsOptional()
   @IsString()
   @MinLength(2)
-  fullName!: string; // <— adicionado
+  fullName?: string;           // agora realmente opcional
 
   @IsOptional()
   @IsUUID()
