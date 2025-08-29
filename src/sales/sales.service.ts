@@ -324,9 +324,12 @@ export class SalesService {
       const metaMonth = metaDaily != null ? Math.round(metaDaily * totalDays) : undefined;
       const supermetaMonth = superDaily != null ? Math.round(superDaily * totalDays) : undefined;
 
-      const partial = values.slice(0, daysElapsed).reduce((a, b) => a + (b || 0), 0);
-      const avg = daysElapsed > 0 ? partial / daysElapsed : 0;
-      const projection = Math.round(avg * totalDays);
+      // para projeção, considerar apenas os dias já preenchidos
+      const filled = values.slice(0, daysElapsed).filter((v) => v > 0);
+      const filledSum = filled.reduce((a, b) => a + (b || 0), 0);
+      const filledDays = filled.length;
+      const avg = filledDays > 0 ? filledSum / filledDays : 0;
+      const projection = Math.round(filledSum + avg * (totalDays - filledDays));
 
       return {
         id: gid,

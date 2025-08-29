@@ -1,7 +1,6 @@
 /* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
-import { Controller, Get, Param, UseGuards, ForbiddenException } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Param, Patch, UseGuards, ForbiddenException } from '@nestjs/common';import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../rbac/roles.guard';
 import { Roles } from '../rbac/roles.decorator';
@@ -29,5 +28,18 @@ export class ClientsController {
       throw new ForbiddenException('Client scope mismatch');
     }
     return this.prisma.client.findUnique({ where: { id } });
+  }
+  
+  @Patch(':id')
+  @Roles('ADMIN', 'CLIENT_ADMIN')
+  async update(
+    @Param('id') id: string,
+    @Body() dto: { name?: string },
+    @CurrentUser() user: types.JwtUser,
+  ) {
+    if (user.role === 'CLIENT_ADMIN' && user.clientId !== id) {
+      throw new ForbiddenException('Client scope mismatch');
+    }
+    return this.prisma.client.update({ where: { id }, data: { ...dto } });
   }
 }

@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
 /* eslint-disable prettier/prettier */
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
@@ -93,13 +91,13 @@ export class EmployeesService {
       if (!target) throw new BadRequestException('Loja destino inexistente');
       if (target.clientId !== user.clientId) throw new ForbiddenException('Loja destino fora do seu cliente');
     }
+    const data: Prisma.EmployeeUpdateInput = {};
+    if (dto.fullName) data.fullName = dto.fullName.trim();
+    if (dto.storeId && user.role !== 'STORE_MANAGER') data.store = { connect: { id: dto.storeId } };
 
     return this.prisma.employee.update({
       where: { id },
-      data: {
-        fullName: dto.fullName?.trim(),
-        storeId: dto.storeId, // só ADMIN/CLIENT_ADMIN efetivamente conseguem alterar
-      },
+      data,
     });
   }
 }
