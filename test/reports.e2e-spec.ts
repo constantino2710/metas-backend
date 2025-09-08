@@ -18,6 +18,21 @@ function buildApp(user: any): Promise<INestApplication> {
         { saleDate: new Date('2023-01-01'), _sum: { amount: 50 } },
         { saleDate: new Date('2023-01-02'), _sum: { amount: 70 } },
       ]),
+      aggregate: jest.fn(({ where: { saleDate } }: any) => {
+        if (saleDate instanceof Date) {
+          const iso = saleDate.toISOString().slice(0, 10);
+          if (iso === '2023-01-01') return { _sum: { amount: 50 } };
+          if (iso === '2023-01-02') return { _sum: { amount: 70 } };
+          return { _sum: { amount: 0 } };
+        }
+        const { gte, lte } = saleDate as { gte: Date; lte: Date };
+        let sum = 0;
+        if (gte <= new Date('2023-01-01') && lte >= new Date('2023-01-01'))
+          sum += 50;
+        if (gte <= new Date('2023-01-02') && lte >= new Date('2023-01-02'))
+          sum += 70;
+        return { _sum: { amount: sum } };
+      }),
     },
     store: {
       findUnique: jest.fn(({ where: { id } }: any) => {
@@ -144,6 +159,59 @@ describe('ReportsController (e2e)', () => {
       })
       .expect(200);
     expect(res.body.series).toHaveLength(2);
+    await app.close();
+  });
+
+  it('daily progress', async () => {
+    const app = await buildApp({
+      id: 'u4',
+      sub: 'u4',
+      email: 'd@d',
+      role: 'CLIENT_ADMIN',
+      clientId: 'client1',
+    });
+    const res = await request(app.getHttpServer())
+      .get('/reports/daily-progress')
+      .query({
+        date: '2023-01-01',
+        scopeType: GoalScope.CLIENT,
+        scopeId: 'client1',
+      })
+      .expect(200);
+    expect(res.body).toEqual({
+      date: '2023-01-01',
+      realized: 50,
+      goal: 100,
+      superGoal: 130,
+      percentage: 50,
+    });
+    await app.close();
+  });
+
+  it('monthly progress', async () => {
+    const app = await buildApp({
+      id: 'u5',
+      sub: 'u5',
+      email: 'e@e',
+      role: 'CLIENT_ADMIN',
+      clientId: 'client1',
+    });
+    const res = await request(app.getHttpServer())
+      .get('/reports/monthly-progress')
+      .query({
+        date: '2023-01-02',
+        scopeType: GoalScope.CLIENT,
+        scopeId: 'client1',
+      })
+      .expect(200);
+    expect(res.body).toEqual({
+      month: '2023-01',
+      date: '2023-01-02',
+      realized: 120,
+      goal: 200,
+      superGoal: 260,
+      percentage: 60,
+    });
     await app.close();
   });
 });

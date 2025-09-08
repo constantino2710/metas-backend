@@ -6,6 +6,8 @@ import * as types from '../auth/types';
 import { GoalsVsSalesQuery } from './dtos/goals-vs-sales.query';
 import { GoalResolverService } from '../goals/goal-resolver.service';
 import { GoalsVsSalesResult } from './types/goals-vs-sales';
+import { DailyProgressQuery } from './dtos/daily-progress.query';
+import { MonthlyProgressQuery } from './dtos/monthly-progress.query';
 
 @Injectable()
 export class ReportsService {
@@ -80,6 +82,86 @@ export class ReportsService {
 
     return { series, totals };
   }
+    // ---------------------------------------------------------------
+  // DAILY PROGRESS
+  // ---------------------------------------------------------------
+  async dailyProgress(user: types.JwtUser, q: DailyProgressQuery) {
+    const dateStr = q.date ?? new Date().toISOString().slice(0, 10);
+    const date = new Date(`${dateStr}T00:00:00.000Z`);
+    if (isNaN(date.getTime())) throw new BadRequestException('Data inválida');
+
+    const scope = await this.resolveScope(user, q.scopeType, q.scopeId);
+
+    const sales = await this.prisma.sale.aggregate({
+      _sum: { amount: true },
+      where: {
+        saleDate: date,
+        clientId: scope.clientId,
+        storeId: scope.storeId,
+        employeeId: scope.employeeId,
+      },
+    });
+
+    const realized = Number(sales._sum.amount || 0);
+
+    const gr = await this.goalResolver.resolve({
+      clientId: scope.clientId,
+      storeId: scope.storeId,
+      employeeId: scope.employeeId,
+      date,
+    });
+    const goal = gr?.goal ?? 0;
+    const superGoal = gr?.superGoal ?? 0;
+    const percentage = goal > 0 ? Math.round((realized / goal) * 10000) / 100 : 0;
+
+    return { date: dateStr, realized, goal, superGoal, percentage };
+  }
+    async monthlyProgress(user: types.JwtUser, q: MonthlyProgressQuery) {
+    const dateStr = q.date ?? new Date().toISOString().slice(0, 10);
+    const date = new Date(`${dateStr}T00:00:00.000Z`);
+    if (isNaN(date.getTime())) throw new BadRequestException('Data inválida');
+
+    const scope = await this.resolveScope(user, q.scopeType, q.scopeId);
+
+    const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+    const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
+
+    const salesAgg = await this.prisma.sale.aggregate({
+      _sum: { amount: true },
+      where: {
+        saleDate: { gte: start, lte: date },
+        clientId: scope.clientId,
+        storeId: scope.storeId,
+        employeeId: scope.employeeId,
+      },
+    });
+    const realized = Number(salesAgg._sum.amount || 0);
+
+    let goal = 0;
+    let superGoal = 0;
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      const gr = await this.goalResolver.resolve({
+        clientId: scope.clientId,
+        storeId: scope.storeId,
+        employeeId: scope.employeeId,
+        date: new Date(d),
+      });
+      goal += gr?.goal ?? 0;
+      superGoal += gr?.superGoal ?? 0;
+    }
+
+    const percentage = goal > 0 ? Math.round((realized / goal) * 10000) / 100 : 0;
+
+    return {
+      month: start.toISOString().slice(0, 7),
+      date: dateStr,
+      realized,
+      goal,
+      superGoal,
+      percentage,
+    };
+  }
+
 
   // ---------------------------------------------------------------
   // RBAC scope resolution
