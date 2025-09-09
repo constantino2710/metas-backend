@@ -8,6 +8,8 @@ import { RefreshDto } from './dtos/refresh.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtUser } from './types';
+import { ForgotPasswordDto } from './dtos/forgot-password.dto';
+import { ResetPasswordDto } from './dtos/reset-password.dto';
 import { JwtAuthGuard } from './jwt-auth.guard'; // ajuste o caminho se o seu guard estiver em outro lugar
 
 @ApiTags('auth')
@@ -29,6 +31,20 @@ export class AuthController {
   @ApiOkResponse({ description: 'Retorna novos access/refresh tokens' })
   refresh(@Body() dto: RefreshDto) {
     return this.auth.refresh(dto.refreshToken);
+  }
+  
+    @Public()
+  @Post('forgot-password')
+  @HttpCode(204)
+  async forgot(@Body() dto: ForgotPasswordDto) {
+    await this.auth.requestPasswordReset(dto.email);
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(204)
+  async reset(@Body() dto: ResetPasswordDto) {
+    await this.auth.resetPassword(dto.token, dto.newPassword);
   }
 
   // --- Protegido por JWT: retorna o usuário do token ---

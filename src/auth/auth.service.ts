@@ -3,13 +3,15 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable prettier/prettier */
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from './dtos/login.dto';
 import { JwtUser } from './types';
+import * as crypto from 'crypto';
+import * as nodemailer from 'nodemailer';
 
 type Tokens = { accessToken: string; refreshToken: string };
 
@@ -100,5 +102,53 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException('Refresh token inválido/expirado');
     }
+  }
+  
+  async requestPasswordReset(email: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) return; // não expõe existência
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const expires = new Date(Date.now() + 1000 * 60 * 60); // 1h
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { resetTokenHash: tokenHash, resetTokenExpires: expires },
+    });
+
+    const transporter = nodemailer.createTransport({
+      host: this.cfg.get<string>('SMTP_HOST'),
+      port: Number(this.cfg.get<string>('SMTP_PORT') ?? 0),
+      auth: {
+        user: this.cfg.get<string>('SMTP_USER'),
+        pass: this.cfg.get<string>('SMTP_PASS'),
+      },
+    });
+
+    const urlBase = this.cfg.get<string>('RESET_PASSWORD_URL') ?? '';
+    const url = `${urlBase}?token=${token}`;
+    await transporter.sendMail({
+      to: email,
+      subject: 'Redefinição de senha',
+      text: `Clique para redefinir: ${url}`,
+    });
+  }
+
+  async resetPassword(token: string, newPassword: string): Promise<void> {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const user = await this.prisma.user.findFirst({
+      where: {
+        resetTokenHash: tokenHash,
+        resetTokenExpires: { gt: new Date() },
+      },
+    });
+    if (!user) throw new BadRequestException('Token inválido ou expirado');
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash, resetTokenHash: null, resetTokenExpires: null },
+    });
   }
 }

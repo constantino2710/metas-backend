@@ -3,6 +3,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
+/* eslint-disable @typescript-eslint/unbound-method */
+const sendMail = jest.fn();
+jest.mock('nodemailer', () => ({ createTransport: () => ({ sendMail }) }), { virtual: true });
+
 import { AuthService } from './auth.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -80,5 +84,54 @@ describe('AuthService login', () => {
       unknown
     > | null;
     expect((decoded as any)?.clientId).toBeUndefined();
+  });
+});
+
+describe('AuthService password reset', () => {
+  it('generates token and stores hash/expiry and sends email', async () => {
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'u1', email: 'a@a.com' }),
+        update: jest.fn(),
+      },
+    } as unknown as PrismaService;
+
+    const cfg = new ConfigService({
+      SMTP_HOST: 'smtp',
+      SMTP_PORT: '25',
+      SMTP_USER: 'u',
+      SMTP_PASS: 'p',
+      RESET_PASSWORD_URL: 'http://example.com/reset',
+    });
+
+    const service = new AuthService(prisma, new JwtService(), cfg);
+    await service.requestPasswordReset('a@a.com');
+
+    expect(prisma.user.update).toHaveBeenCalled();
+    const data = (prisma.user.update as any).mock.calls[0][0].data;
+    expect(data.resetTokenHash).toBeDefined();
+    expect(data.resetTokenExpires).toBeInstanceOf(Date);
+    expect(sendMail).toHaveBeenCalled();
+  });
+
+  it('resets password when token valid', async () => {
+    const token = 'abc123';
+    const prisma = {
+      user: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'u1' }),
+        update: jest.fn(),
+      },
+    } as unknown as PrismaService;
+    const cfg = new ConfigService({});
+    const service = new AuthService(prisma, new JwtService(), cfg);
+    await service.resetPassword(token, 'newpass');
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      data: {
+        passwordHash: expect.any(String),
+        resetTokenHash: null,
+        resetTokenExpires: null,
+      },
+    });
   });
 });
