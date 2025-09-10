@@ -32,7 +32,7 @@ export class AuthService {
       role: user.role as JwtUser['role'],
       clientId: user.clientId ?? undefined,
       storeId: user.storeId ?? undefined,
-      id: undefined
+      id: undefined,
     };
     return this.jwt.sign(payload, {
       secret: this.cfg.get<string>('JWT_SECRET'),
@@ -80,7 +80,6 @@ export class AuthService {
         clientId: user.clientId ?? undefined,
         storeId: user.storeId ?? undefined,
       },
-
     };
   }
 
@@ -103,7 +102,7 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token inválido/expirado');
     }
   }
-  
+
   async requestPasswordReset(email: string): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { email } });
     if (!user) return; // não expõe existência
@@ -117,21 +116,31 @@ export class AuthService {
       data: { resetTokenHash: tokenHash, resetTokenExpires: expires },
     });
 
+    const host = this.cfg.get<string>('MAIL_HOST')!;
+    const port = Number(this.cfg.get<string>('MAIL_PORT') ?? 0);
+    const userAuth = this.cfg.get<string>('MAIL_USER')!;
+    const passAuth = this.cfg.get<string>('MAIL_PASS')!;
+    const from = this.cfg.get<string>('MAIL_FROM') ?? `"Suporte" <${userAuth}>`;
+    const secure = String(this.cfg.get<string>('MAIL_SECURE') ?? '').toLowerCase() === 'true'; // se usar 465
+
     const transporter = nodemailer.createTransport({
-      host: this.cfg.get<string>('SMTP_HOST'),
-      port: Number(this.cfg.get<string>('SMTP_PORT') ?? 0),
-      auth: {
-        user: this.cfg.get<string>('SMTP_USER'),
-        pass: this.cfg.get<string>('SMTP_PASS'),
-      },
+      host,
+      port,
+      secure, // true para 465, false para 587/STARTTLS
+      auth: { user: userAuth, pass: passAuth },
     });
 
-    const urlBase = this.cfg.get<string>('RESET_PASSWORD_URL') ?? '';
+    const urlBase = this.cfg.get<string>('FRONTEND_RESET_PASSWORD_URL') ?? '';
     const url = `${urlBase}?token=${token}`;
+
     await transporter.sendMail({
+      from,
       to: email,
       subject: 'Redefinição de senha',
       text: `Clique para redefinir: ${url}`,
+      html: `<p>Para redefinir sua senha, clique no link abaixo:</p>
+             <p><a href="${url}">${url}</a></p>
+             <p>Se você não solicitou, ignore este e-mail.</p>`,
     });
   }
 
