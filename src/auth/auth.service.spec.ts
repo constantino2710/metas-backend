@@ -12,6 +12,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../database/prisma.service';
+import crypto from 'crypto';
 
 describe('AuthService login', () => {
   it('includes clientId in JWT for client_admin', async () => {
@@ -88,6 +89,7 @@ describe('AuthService login', () => {
 });
 
 describe('AuthService password reset', () => {
+    beforeEach(() => sendMail.mockClear());
   it('generates token and stores hash/expiry and sends email', async () => {
     const prisma = {
       user: {
@@ -97,11 +99,11 @@ describe('AuthService password reset', () => {
     } as unknown as PrismaService;
 
     const cfg = new ConfigService({
-      SMTP_HOST: 'smtp',
-      SMTP_PORT: '25',
-      SMTP_USER: 'u',
-      SMTP_PASS: 'p',
-      RESET_PASSWORD_URL: 'http://example.com/reset',
+      MAIL_HOST: 'smtp',
+      MAIL_PORT: '25',
+      MAIL_USER: 'u',
+      MAIL_PASS: 'p',
+      FRONTEND_RESET_PASSWORD_URL: 'http://example.com/reset',
     });
 
     const service = new AuthService(prisma, new JwtService(), cfg);
@@ -112,6 +114,27 @@ describe('AuthService password reset', () => {
     expect(data.resetTokenHash).toBeDefined();
     expect(data.resetTokenExpires).toBeInstanceOf(Date);
     expect(sendMail).toHaveBeenCalled();
+  });
+    it('places token before hash fragment in reset link', async () => {
+    const prisma = {
+      user: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'u1', email: 'a@a.com' }),
+        update: jest.fn(),
+      },
+    } as unknown as PrismaService;
+    const cfg = new ConfigService({
+      MAIL_HOST: 'smtp',
+      MAIL_PORT: '25',
+      MAIL_USER: 'u',
+      MAIL_PASS: 'p',
+      FRONTEND_RESET_PASSWORD_URL: 'https://app.example.com/#/reset',
+    });
+
+    const service = new AuthService(prisma, new JwtService(), cfg);
+    await service.requestPasswordReset('a@a.com');
+
+    const mail = sendMail.mock.calls[0][0];
+    expect(mail.text).toMatch(/https:\/\/app\.example\.com\/\?token=[a-f0-9]+#\/reset/);
   });
 
   it('resets password when token valid', async () => {
@@ -133,5 +156,23 @@ describe('AuthService password reset', () => {
         resetTokenExpires: null,
       },
     });
+  });
+  
+  it('resets password when token already hashed', async () => {
+    const raw = 'abc123';
+    const hashed = crypto.createHash('sha256').update(raw).digest('hex');
+    const prisma = {
+      user: {
+        findFirst: jest.fn().mockImplementation(({ where }) => {
+          const hit = where.OR.find((c: any) => c.resetTokenHash === hashed);
+          return hit ? { id: 'u1' } : null;
+        }),
+        update: jest.fn(),
+      },
+    } as unknown as PrismaService;
+    const cfg = new ConfigService({});
+    const service = new AuthService(prisma, new JwtService(), cfg);
+    await service.resetPassword(hashed, 'newpass');
+    expect(prisma.user.update).toHaveBeenCalled();
   });
 });

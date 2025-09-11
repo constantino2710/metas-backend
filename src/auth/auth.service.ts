@@ -1,4 +1,3 @@
-/* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
@@ -131,7 +130,14 @@ export class AuthService {
     });
 
     const urlBase = this.cfg.get<string>('FRONTEND_RESET_PASSWORD_URL') ?? '';
-    const url = `${urlBase}?token=${token}`;
+        let url: string;
+    try {
+      const built = new URL(urlBase);
+      built.searchParams.set('token', token);
+      url = built.toString();
+    } catch {
+      url = `${urlBase}?token=${token}`;
+    }
 
     await transporter.sendMail({
       from,
@@ -148,7 +154,10 @@ export class AuthService {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const user = await this.prisma.user.findFirst({
       where: {
-        resetTokenHash: tokenHash,
+                OR: [
+          { resetTokenHash: tokenHash },
+          { resetTokenHash: token },
+        ],
         resetTokenExpires: { gt: new Date() },
       },
     });
@@ -160,4 +169,5 @@ export class AuthService {
       data: { passwordHash, resetTokenHash: null, resetTokenExpires: null },
     });
   }
+  
 }
