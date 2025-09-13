@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable prettier/prettier */
 // src/goals/goal-resolver.service.ts
 import { Injectable } from '@nestjs/common';
@@ -11,16 +13,18 @@ export class GoalResolverService {
   async resolve(params: {
     clientId: string;
     storeId?: string;
+    sectorId?: string;
     employeeId?: string;
     date: Date;
   }): Promise<{ goal: number; superGoal: number } | null> {
-    const { clientId, storeId, employeeId, date } = params;
+    const { clientId, storeId, sectorId, employeeId, date } = params;
 
     const or: Prisma.GoalPolicyWhereInput[] = [
       { scopeType: GoalScope.CLIENT, scopeId: clientId },
     ];
     if (storeId) or.push({ scopeType: GoalScope.STORE, scopeId: storeId });
     if (employeeId) or.push({ scopeType: GoalScope.EMPLOYEE, scopeId: employeeId });
+      if (sectorId) or.push({ scopeType: GoalScope.SECTOR, scopeId: sectorId });
 
     const policies = await this.prisma.goalPolicy.findMany({
       where: { effectiveFrom: { lte: date }, OR: or },
@@ -28,7 +32,11 @@ export class GoalResolverService {
     });
 
     const by = (t: GoalScope) => policies.find(p => p.scopeType === t);
-    const chosen = by(GoalScope.EMPLOYEE) ?? by(GoalScope.STORE) ?? by(GoalScope.CLIENT);
+    const chosen =
+      by(GoalScope.EMPLOYEE) ??
+      by(GoalScope.SECTOR) ??
+      by(GoalScope.STORE) ??
+      by(GoalScope.CLIENT);
     if (!chosen) return null;
 
     // metaDaily/supermetaDaily são Decimal; converta para number

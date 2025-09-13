@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable prefer-const */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
@@ -165,6 +166,25 @@ export class GoalsService {
       return { scopeType: GoalScope.EMPLOYEE, scopeId: q.employeeId };
     }
 
+        if (q.sectorId) {
+      if (user.role === 'STORE_MANAGER') {
+        if (q.storeId && q.storeId !== user.storeId) throw new ForbiddenException('Setor fora do escopo da loja');
+        const sec = await this.prisma.sector.findUnique({
+          where: { id: q.sectorId },
+          select: { storeId: true },
+        });
+        if (!sec || sec.storeId !== user.storeId) throw new ForbiddenException('Setor fora do escopo da loja');
+      } else if (user.role === 'CLIENT_ADMIN') {
+        const sec = await this.prisma.sector.findUnique({
+          where: { id: q.sectorId },
+          select: { store: { select: { clientId: true } } },
+        });
+        if (!sec || sec.store.clientId !== user.clientId)
+          throw new ForbiddenException('Setor fora do escopo do cliente');
+      }
+      return { scopeType: GoalScope.SECTOR, scopeId: q.sectorId };
+    }
+
     if (q.storeId) {
       if (user.role === 'STORE_MANAGER') {
         if (q.storeId !== user.storeId) throw new ForbiddenException('Loja fora do escopo do usuário');
@@ -178,8 +198,7 @@ export class GoalsService {
       return { scopeType: GoalScope.STORE, scopeId: q.storeId };
     }
 
-    if (!q.clientId) throw new NotFoundException('Informe clientId, storeId ou employeeId');
-
+    if (!q.clientId) throw new NotFoundException('Informe clientId, storeId, sectorId ou employeeId');
     if (user.role === 'CLIENT_ADMIN' && q.clientId !== user.clientId) {
       throw new ForbiddenException('Cliente fora do escopo do usuário');
     }
@@ -211,6 +230,15 @@ export class GoalsService {
         });
         if (!e || e.store.clientId !== user.clientId) throw new ForbiddenException('Funcionário fora do escopo do cliente');
         return;
+      }
+            if (scopeType === 'SECTOR') {
+         const sec = await this.prisma.sector.findUnique({
+           where: { id: scopeId },
+           select: { store: { select: { clientId: true } } },
+         });
+         if (!sec || sec.store.clientId !== user.clientId)
+           throw new ForbiddenException('Setor fora do escopo do cliente');
+         return;
       }
     }
 

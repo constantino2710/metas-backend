@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/require-await */
 // src/database/prisma.service.ts
 /* eslint-disable @typescript-eslint/no-misused-promises */
@@ -6,6 +8,13 @@ import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit {
+  private _sector: any;
+  public get sector(): any {
+    return this._sector;
+  }
+  public set sector(value: any) {
+    this._sector = value;
+  }
   async onModuleInit() {
     await this.$connect();
   }

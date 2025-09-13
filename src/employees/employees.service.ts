@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
 /* eslint-disable prettier/prettier */
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
@@ -36,7 +39,10 @@ export class EmployeesService {
     return this.prisma.employee.findMany({
       where: scoped,
       orderBy: [{ fullName: 'asc' }],
-      include: { store: { select: { id: true, name: true, clientId: true } } },
+        include: {
+        store: { select: { id: true, name: true, clientId: true } },
+        Sector: { select: { id: true, name: true } },
+      },
     });
   }
 
@@ -60,9 +66,20 @@ export class EmployeesService {
       if (!store) throw new BadRequestException('Loja inexistente');
       storeId = store.id;
     }
+    if (!dto.sectorId) throw new BadRequestException('sectorId é obrigatório');
+    const sector = await this.prisma.sector.findUnique({ where: { id: dto.sectorId } });
+    if (!sector) throw new BadRequestException('Setor inexistente');
+    if (sector.storeId !== storeId) throw new BadRequestException('Setor não pertence à loja');
+
+    const data: Prisma.EmployeeCreateInput = {
+      fullName: dto.fullName.trim(),
+      store: { connect: { id: storeId! } },
+    };
+    if (dto.sectorId) data.Sector = { connect: { id: dto.sectorId } };
 
     return this.prisma.employee.create({
-      data: { fullName: dto.fullName.trim(), storeId: storeId! },
+      data,
+      include: { Sector: { select: { id: true, name: true } } },
     });
   }
 
@@ -92,12 +109,25 @@ export class EmployeesService {
       if (target.clientId !== user.clientId) throw new ForbiddenException('Loja destino fora do seu cliente');
     }
     const data: Prisma.EmployeeUpdateInput = {};
+    let targetStoreId = emp.storeId;
     if (dto.fullName) data.fullName = dto.fullName.trim();
-    if (dto.storeId && user.role !== 'STORE_MANAGER') data.store = { connect: { id: dto.storeId } };
+    if (dto.storeId && user.role !== 'STORE_MANAGER') {
+      data.store = { connect: { id: dto.storeId } };
+      targetStoreId = dto.storeId;
+    }
+    if (dto.sectorId) data.Sector = { connect: { id: dto.sectorId } };
+
+    if (dto.sectorId) {
+      const sector = await this.prisma.sector.findUnique({ where: { id: dto.sectorId } });
+      if (!sector) throw new BadRequestException('Setor inexistente');
+      if (sector.storeId !== targetStoreId) throw new BadRequestException('Setor não pertence à loja');
+      data.Sector = { connect: { id: dto.sectorId } };
+    }
 
     return this.prisma.employee.update({
       where: { id },
       data,
+      include: { Sector: { select: { id: true, name: true } } },
     });
   }
 }

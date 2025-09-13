@@ -6,7 +6,8 @@ import { GoalScope } from '@prisma/client';
 export class CreateGoalDto {
   @ApiProperty({ enum: GoalScope })
   @IsEnum(GoalScope)
-  scopeType!: GoalScope; // CLIENT | STORE | EMPLOYEE
+  scopeType!: GoalScope; // CLIENT | STORE | EMPLOYEE | SECTOR
+
 
   @ApiProperty()
   @IsUUID()

@@ -5,9 +5,15 @@ import { StoresController } from './stores.controller';
 import { ClientsController } from './clients.controller';
 import { TenantsService } from './tenants.service';
 import { PrismaService } from '../database/prisma.service';
+import { SectorsController } from './sectors.controller';
 
 @Module({
-  controllers: [TenantsController, StoresController, ClientsController],
+  controllers: [
+    TenantsController,
+    StoresController,
+    ClientsController,
+    SectorsController,
+  ],
   providers: [TenantsService, PrismaService],
   exports: [TenantsService],
 })

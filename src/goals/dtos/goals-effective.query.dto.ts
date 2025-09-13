@@ -15,10 +15,15 @@ export class GoalsEffectiveQueryDto {
   @ApiPropertyOptional({ description: 'Escopo loja' })
   @IsOptional()
   @IsUUID()
-  storeId?: string;
+      storeId?: string;
 
-  @ApiPropertyOptional({ description: 'Escopo funcionário' })
-  @IsOptional()
-  @IsUUID()
-  employeeId?: string;
-}
+    @ApiPropertyOptional({ description: 'Escopo funcionário' })
+    @IsOptional()
+    @IsUUID()
+    employeeId?: string;
+
+    @ApiPropertyOptional({ description: 'Escopo setor' })
+    @IsOptional()
+    @IsUUID()
+    sectorId?: string;
+  }

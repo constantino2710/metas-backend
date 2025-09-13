@@ -9,4 +9,8 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsUUID()
   storeId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  sectorId?: string;
 }

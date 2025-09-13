@@ -20,6 +20,7 @@ enum GoalScope {
   CLIENT
   STORE
   EMPLOYEE
+  SECTOR
 }
 
 // ---------- models ----------
@@ -59,20 +60,41 @@ model Store {
 
   client    Client     @relation(fields: [clientId], references: [id])
   employees Employee[]
+  sectors   Sector[]
   users     User[]     @relation("StoreUsers") // STORE_MANAGER(s) desta loja
   sales     Sale[]
+}
+
+model Sector {
+  id        String   @id @default(uuid()) @db.Uuid
+  storeId   String   @db.Uuid
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  employees Employee[]
+
+  @@index([storeId])
 }
 
 model Employee {
   id        String   @id @default(uuid()) @db.Uuid
   storeId   String   @db.Uuid
+  sectorId  String?  @db.Uuid   // <- temporário: opcional
   fullName  String
   code      String?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  store Store  @relation(fields: [storeId], references: [id])
-  sales Sale[]
+  store   Store   @relation(fields: [storeId], references: [id])
+  store  Store  @relation(fields: [storeId], references: [id])
+  Sector Sector? @relation(fields: [sectorId], references: [id], onDelete: SetNull)
+  sales  Sale[]
+
+  @@index([storeId])
+  @@index([sectorId])
 }
 
 model Sale {

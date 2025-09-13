@@ -10,4 +10,8 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsUUID()
   storeId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  sectorId?: string;
 }

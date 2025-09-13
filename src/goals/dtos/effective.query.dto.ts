@@ -5,5 +5,6 @@ export class EffectiveQueryDto {
   @IsUUID() clientId!: string;
   @IsOptional() @IsUUID() storeId?: string;
   @IsOptional() @IsUUID() employeeId?: string;
+  @IsOptional() @IsUUID() sectorId?: string;
   @IsOptional() @IsDateString() date?: string; // default = hoje
 }
