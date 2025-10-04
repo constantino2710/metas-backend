@@ -2,9 +2,10 @@ import { Module } from '@nestjs/common';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 import { PrismaService } from '../database/prisma.service';
+import { GoalResolverService } from '../goals/goal-resolver.service';
 
 @Module({
   controllers: [SalesController],
-  providers: [SalesService, PrismaService],
+  providers: [SalesService, PrismaService, GoalResolverService],
 })
 export class SalesModule {}

@@ -15,10 +15,14 @@ import { CreateSaleDto } from './dtos/create-sale.dto';
 import { SalesListQueryDto } from './dtos/sales-list.query.dto';
 import { SalesDailyQueryDto, SalesDailyScope } from './dtos/sales-daily.query.dto';
 import { SalesSetDailyDto } from './dtos/sales-set-daily.dto';
+import { GoalResolverService } from '../goals/goal-resolver.service';
 
 @Injectable()
 export class SalesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly goalResolver: GoalResolverService,
+  ) {}
 
   // ----------------------------------------------------------------------
   // LIST
@@ -111,7 +115,6 @@ export class SalesService {
     }
     if (endD < startD) throw new BadRequestException('Fim anterior ao início');
 
-    // eixo de dias
     const days: string[] = [];
     for (let d = new Date(startD); d <= endD; d.setUTCDate(d.getUTCDate() + 1)) {
       days.push(d.toISOString().slice(0, 10));
@@ -119,21 +122,20 @@ export class SalesService {
     const totalDays = days.length;
     const idx = new Map(days.map((d, i) => [d, i]));
 
-    // filtro base e chave de agrupamento
     const where: Prisma.SaleWhereInput = { saleDate: { gte: startD, lte: endD } };
     let groupKey: 'clientId' | 'storeId' | 'employeeId';
 
     if (q.scope === SalesDailyScope.SYSTEM) {
-      groupKey = 'clientId'; // 1 linha por cliente
+      groupKey = 'clientId';
     } else if (q.scope === SalesDailyScope.CLIENT) {
       where.clientId = q.id;
-      groupKey = 'storeId'; // 1 linha por loja
+      groupKey = 'storeId';
     } else if (q.scope === SalesDailyScope.STORE) {
       where.storeId = q.id;
-      groupKey = 'employeeId'; // 1 linha por funcionário
+      groupKey = 'employeeId';
     } else {
       where.employeeId = q.id;
-      groupKey = 'employeeId'; // 1 linha (funcionário)
+      groupKey = 'employeeId';
     }
 
     const grouped = await this.prisma.sale.groupBy({
@@ -152,9 +154,11 @@ export class SalesService {
       if (i !== undefined) series.get(gid)![i] += Number(g._sum.amount || 0);
     }
 
-    // labels e auxiliares
     let labels: Record<string, string> = {};
-    const empStoreByEmpId = new Map<string, { storeId: string }>();
+    const employeeContextById = new Map<
+      string,
+      { storeId: string; clientId: string; sectorId?: string | null; sectorName?: string | null }
+    >();
 
     if (q.scope === SalesDailyScope.SYSTEM) {
       const clients = await this.prisma.client.findMany({
@@ -171,160 +175,153 @@ export class SalesService {
       });
       labels = Object.fromEntries(stores.map((s) => [s.id, s.name]));
     } else if (q.scope === SalesDailyScope.STORE) {
+      const store = await this.prisma.store.findUnique({
+        where: { id: q.id },
+        select: { id: true, clientId: true },
+      });
+      if (!store) throw new BadRequestException('Loja não encontrada');
       const emps = await this.prisma.employee.findMany({
         where: { storeId: q.id, isActive: true },
-        select: { id: true, fullName: true },
+        select: {
+          id: true,
+          fullName: true,
+          sectorId: true,
+          Sector: { select: { id: true, name: true } },
+        },
         orderBy: { fullName: 'asc' },
       });
       labels = Object.fromEntries(emps.map((e) => [e.id, e.fullName]));
+      for (const emp of emps) {
+        employeeContextById.set(emp.id, {
+          storeId: store.id,
+          clientId: store.clientId,
+          sectorId: emp.sectorId,
+          sectorName: emp.Sector?.name ?? null,
+        });
+      }
     } else {
-      // EMPLOYEE – garantir id
       if (!q.id) throw new BadRequestException('id é obrigatório quando scope=EMPLOYEE');
       const emp = await this.prisma.employee.findUnique({
         where: { id: q.id },
-        select: { id: true, fullName: true, storeId: true },
+        select: {
+          id: true,
+          fullName: true,
+          storeId: true,
+          sectorId: true,
+          store: { select: { id: true, clientId: true } },
+          Sector: { select: { id: true, name: true } },
+        },
       });
       if (emp) {
         labels[emp.id] = emp.fullName;
-        empStoreByEmpId.set(emp.id, { storeId: emp.storeId });
+        employeeContextById.set(emp.id, {
+          storeId: emp.storeId,
+          clientId: emp.store.clientId,
+          sectorId: emp.sectorId,
+          sectorName: emp.Sector?.name ?? null,
+        });
       }
     }
 
-    // assegura linhas zeradas
     for (const gid of Object.keys(labels)) {
       if (!series.has(gid)) series.set(gid, Array(totalDays).fill(0));
     }
 
-    // ---------------- METAS
     const metaForRow: Record<string, { metaDaily?: number; superDaily?: number }> = {};
 
-    if (q.scope === SalesDailyScope.SYSTEM) {
-      // soma das metas diárias das LOJAS de cada cliente
-      const clientIds = Object.keys(labels);
-      if (clientIds.length) {
-        const stores = await this.prisma.store.findMany({
-          where: { clientId: { in: clientIds }, isActive: true },
-          select: { id: true, clientId: true },
-        });
-        const storeIds = stores.map((s) => s.id);
-        const storeIdsByClient: Record<string, string[]> = {};
-        for (const s of stores) {
-          (storeIdsByClient[s.clientId] ??= []).push(s.id);
-        }
+    // ----------------------------------------------------------------------
+    // RESOLUÇÃO DE METAS COM GOALRESOLVER
+    // ----------------------------------------------------------------------
+    if (q.scope === SalesDailyScope.STORE) {
+      await Promise.all(
+        Object.keys(labels).map(async (empId) => {
+          const context = employeeContextById.get(empId);
+          if (!context) {
+            metaForRow[empId] = {};
+            return;
+          }
 
-        if (storeIds.length) {
-          const policies = await this.prisma.goalPolicy.findMany({
-            where: { scopeType: 'STORE', scopeId: { in: storeIds }, effectiveFrom: { lte: startD } },
-            orderBy: [{ scopeId: 'asc' }, { effectiveFrom: 'desc' }],
+          const resolved = await this.goalResolver.resolve({
+            clientId: context.clientId,
+            storeId: context.storeId,
+            sectorId: context.sectorId ?? undefined,
+            employeeId: empId,
+            date: startD,
           });
-          const bestPerStore = new Map<string, { meta: number; superm: number }>();
-          for (const p of policies) {
-            const sid = p.scopeId;
-            if (!bestPerStore.has(sid)) {
-              bestPerStore.set(sid, {
-                meta: Number(p.metaDaily),
-                superm: Number(p.supermetaDaily),
-              });
-            }
+
+          if (resolved) {
+            metaForRow[empId] = {
+              metaDaily: resolved.goal,
+              superDaily: resolved.superGoal,
+            };
+          } else {
+            metaForRow[empId] = {};
           }
-          for (const cid of clientIds) {
-            let m = 0,
-              s = 0,
-              any = false;
-            for (const sid of storeIdsByClient[cid] || []) {
-              const b = bestPerStore.get(sid);
-              if (b) {
-                m += b.meta;
-                s += b.superm;
-                any = true;
-              }
-            }
-            metaForRow[cid] = any ? { metaDaily: m, superDaily: s } : {};
-          }
-        }
-      }
-    } else if (q.scope === SalesDailyScope.CLIENT) {
-      const storeIds = Object.keys(labels);
-      if (storeIds.length) {
-        const policies = await this.prisma.goalPolicy.findMany({
-          where: { scopeType: 'STORE', scopeId: { in: storeIds }, effectiveFrom: { lte: startD } },
-          orderBy: [{ scopeId: 'asc' }, { effectiveFrom: 'desc' }],
-        });
-        const best: Record<string, { meta: number; superm: number }> = {};
-        for (const p of policies) {
-          const sid = p.scopeId;
-          if (!best[sid]) best[sid] = { meta: Number(p.metaDaily), superm: Number(p.supermetaDaily) };
-        }
-        for (const sid of storeIds) {
-          metaForRow[sid] = best[sid]
-            ? { metaDaily: best[sid].meta, superDaily: best[sid].superm }
-            : {};
-        }
-      }
-    } else if (q.scope === SalesDailyScope.STORE) {
-      // uma única policy para a loja aplicada a todas as linhas (funcionários)
-      const pol = await this.prisma.goalPolicy.findFirst({
-        where: { scopeType: 'STORE', scopeId: q.id, effectiveFrom: { lte: startD } },
-        orderBy: { effectiveFrom: 'desc' },
-      });
-      const common = pol ? { metaDaily: Number(pol.metaDaily), superDaily: Number(pol.supermetaDaily) } : {};
-      for (const empId of Object.keys(labels)) metaForRow[empId] = common;
-    } else {
-      // EMPLOYEE
+        }),
+      );
+    } else if (q.scope === SalesDailyScope.EMPLOYEE) {
       const empId = q.id!;
-      let metaDaily: number | undefined;
-      let superDaily: number | undefined;
-
-      const pEmp = await this.prisma.goalPolicy.findFirst({
-        where: { scopeType: 'EMPLOYEE', scopeId: empId, effectiveFrom: { lte: startD } },
-        orderBy: { effectiveFrom: 'desc' },
-      });
-      if (pEmp) {
-        metaDaily = Number(pEmp.metaDaily);
-        superDaily = Number(pEmp.supermetaDaily);
-      } else {
-        // fallback: meta da loja do funcionário
-        let storeId: string | undefined = empStoreByEmpId.get(empId)?.storeId;
-        if (!storeId) {
-          const emp = await this.prisma.employee.findUnique({
-            where: { id: empId },
-            select: { storeId: true },
-          });
-          storeId = emp?.storeId;
-        }
-        if (storeId) {
-          const pStore = await this.prisma.goalPolicy.findFirst({
-            where: { scopeType: 'STORE', scopeId: storeId, effectiveFrom: { lte: startD } },
-            orderBy: { effectiveFrom: 'desc' },
-          });
-          if (pStore) {
-            metaDaily = Number(pStore.metaDaily);
-            superDaily = Number(pStore.supermetaDaily);
-          }
+      let context = employeeContextById.get(empId);
+      if (!context) {
+        const emp = await this.prisma.employee.findUnique({
+          where: { id: empId },
+          select: {
+            storeId: true,
+            sectorId: true,
+            store: { select: { id: true, clientId: true } },
+            Sector: { select: { id: true, name: true } },
+          },
+        });
+        if (emp) {
+          context = {
+            storeId: emp.storeId,
+            clientId: emp.store.clientId,
+            sectorId: emp.sectorId,
+            sectorName: emp.Sector?.name ?? null,
+          };
+          employeeContextById.set(empId, context);
         }
       }
-      metaForRow[empId] = { metaDaily, superDaily };
+
+      if (context) {
+        const resolved = await this.goalResolver.resolve({
+          clientId: context.clientId,
+          storeId: context.storeId,
+          sectorId: context.sectorId ?? undefined,
+          employeeId: empId,
+          date: startD,
+        });
+        if (resolved) {
+          metaForRow[empId] = {
+            metaDaily: resolved.goal,
+            superDaily: resolved.superGoal,
+          };
+        } else {
+          metaForRow[empId] = {};
+        }
+      } else {
+        metaForRow[empId] = {};
+      }
     }
 
-    // dias decorridos (para projeção e para o front pintar "n" nos dias futuros)
-    const today = new Date(); today.setUTCHours(0, 0, 0, 0);
-    const end0 = new Date(endD); end0.setUTCHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const end0 = new Date(endD);
+    end0.setUTCHours(0, 0, 0, 0);
     const minRef = today.getTime() < end0.getTime() ? today : end0;
     let daysElapsed = Math.floor((minRef.getTime() - startD.getTime()) / 86_400_000) + 1;
     if (daysElapsed < 0) daysElapsed = 0;
     if (daysElapsed > totalDays) daysElapsed = totalDays;
 
-    // monta linhas
     const groupIds = Object.keys(labels);
     const rows = groupIds.map((gid) => {
       const values = series.get(gid)!;
       const total = values.reduce((a, b) => a + (b || 0), 0);
-
       const { metaDaily, superDaily } = metaForRow[gid] || {};
       const metaMonth = metaDaily != null ? Math.round(metaDaily * totalDays) : undefined;
       const supermetaMonth = superDaily != null ? Math.round(superDaily * totalDays) : undefined;
+      const context = employeeContextById.get(gid);
 
-      // para projeção, considerar apenas os dias já preenchidos
       const filled = values.slice(0, daysElapsed).filter((v) => v > 0);
       const filledSum = filled.reduce((a, b) => a + (b || 0), 0);
       const filledDays = filled.length;
@@ -334,6 +331,8 @@ export class SalesService {
       return {
         id: gid,
         label: labels[gid] ?? gid,
+        sectorId: context?.sectorId ?? null,
+        sectorName: context?.sectorName ?? null,
         values,
         total,
         metaDaily,
@@ -357,7 +356,7 @@ export class SalesService {
   }
 
   // ----------------------------------------------------------------------
-  // setDaily (edição inline de um dia do funcionário)
+  // setDaily (edição inline)
   // ----------------------------------------------------------------------
   async setDaily(user: types.JwtUser, dto: SalesSetDailyDto) {
     const saleDate = new Date(dto.saleDate + 'T00:00:00.000Z');
@@ -394,7 +393,14 @@ export class SalesService {
       const updated = await this.prisma.sale.update({
         where: { id: existing.id },
         data: { amount: dto.amount },
-        select: { id: true, employeeId: true, storeId: true, clientId: true, saleDate: true, amount: true },
+        select: {
+          id: true,
+          employeeId: true,
+          storeId: true,
+          clientId: true,
+          saleDate: true,
+          amount: true,
+        },
       });
       return { ok: true, sale: updated };
     } else {
@@ -407,14 +413,21 @@ export class SalesService {
           amount: dto.amount,
           createdBy: user.id,
         },
-        select: { id: true, employeeId: true, storeId: true, clientId: true, saleDate: true, amount: true },
+        select: {
+          id: true,
+          employeeId: true,
+          storeId: true,
+          clientId: true,
+          saleDate: true,
+          amount: true,
+        },
       });
       return { ok: true, sale: created };
     }
   }
 
   // ----------------------------------------------------------------------
-  // RBAC helper (valida também a presença do id quando necessário)
+  // RBAC helper
   // ----------------------------------------------------------------------
   private async assertDailyScope(user: types.JwtUser, q: SalesDailyQueryDto) {
     if (q.scope === SalesDailyScope.SYSTEM) {
@@ -423,7 +436,6 @@ export class SalesService {
     }
 
     if (user.role === 'ADMIN') {
-      // ADMIN pode ver qualquer escopo, mas precisa de id quando exigido
       if (
         (q.scope === SalesDailyScope.CLIENT ||
           q.scope === SalesDailyScope.STORE ||
@@ -449,8 +461,10 @@ export class SalesService {
         select: { id: true, clientId: true },
       });
       if (!store) throw new ForbiddenException();
-      if (user.role === 'CLIENT_ADMIN' && store.clientId !== user.clientId) throw new ForbiddenException();
-      if (user.role === 'STORE_MANAGER' && store.id !== user.storeId) throw new ForbiddenException();
+      if (user.role === 'CLIENT_ADMIN' && store.clientId !== user.clientId)
+        throw new ForbiddenException();
+      if (user.role === 'STORE_MANAGER' && store.id !== user.storeId)
+        throw new ForbiddenException();
       return;
     }
 
@@ -461,8 +475,10 @@ export class SalesService {
         select: { store: { select: { id: true, clientId: true } } },
       });
       if (!emp) throw new ForbiddenException();
-      if (user.role === 'CLIENT_ADMIN' && emp.store.clientId !== user.clientId) throw new ForbiddenException();
-      if (user.role === 'STORE_MANAGER' && emp.store.id !== user.storeId) throw new ForbiddenException();
+      if (user.role === 'CLIENT_ADMIN' && emp.store.clientId !== user.clientId)
+        throw new ForbiddenException();
+      if (user.role === 'STORE_MANAGER' && emp.store.id !== user.storeId)
+        throw new ForbiddenException();
       return;
     }
 
