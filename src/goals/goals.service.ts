@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-return */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable prefer-const */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
@@ -21,12 +22,24 @@ export class GoalsService {
 
   /**
    * Retorna a meta diária e a super meta diária vigentes na data/escopo.
-   * - employeeId > storeId > clientId
+   * - employeeId > sectorId > storeId > clientId
    */
   async effective(user: types.JwtUser, q: GoalsEffectiveQueryDto) {
     const dateStr = q.date ?? new Date().toISOString().slice(0, 10);
 
     const { scopeType, scopeId } = await this.resolveScope(user, q);
+
+    // Caso seja loja sem escopo menor, soma metas dos setores
+    if (scopeType === GoalScope.STORE) {
+      const { goal, superGoal } = await this.sumStoreGoals(scopeId, dateStr);
+      return {
+        scopeType,
+        scopeId,
+        goal,
+        superGoal,
+        period: { start: undefined, end: dateStr },
+      };
+    }
 
     const policy = await this.prisma.goalPolicy.findFirst({
       where: {
@@ -68,6 +81,11 @@ export class GoalsService {
    */
   async create(user: types.JwtUser, dto: CreateGoalDto) {
     await this.assertCreateScope(user, dto.scopeType, dto.scopeId);
+
+    // Bloqueia criação direta de metas para lojas
+    if (dto.scopeType === GoalScope.STORE) {
+      throw new BadRequestException('Metas diárias devem ser definidas por setor. Cadastre setores para a loja.');
+    }
 
     const effectiveFrom = new Date(dto.effectiveFrom + 'T00:00:00.000Z');
     if (Number.isNaN(+effectiveFrom)) {
@@ -130,9 +148,50 @@ export class GoalsService {
 
   // ---------- helpers ----------
 
+  private async sumStoreGoals(storeId: string, dateStr: string) {
+    const sectors = await this.prisma.sector.findMany({
+      where: { storeId, isActive: true },
+      select: { id: true },
+    });
+
+    if (sectors.length === 0) {
+      throw new BadRequestException('Loja sem setores. Cadastre um setor antes de definir metas.');
+    }
+
+    const policies = await this.prisma.goalPolicy.findMany({
+      where: {
+        scopeType: GoalScope.SECTOR,
+        scopeId: { in: sectors.map(s => s.id) },
+        effectiveFrom: { lte: new Date(dateStr + 'T00:00:00.000Z') },
+      },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+
+    const latestBySector = new Map<string, (typeof policies)[number]>();
+    for (const policy of policies) {
+      if (!latestBySector.has(policy.scopeId)) {
+        latestBySector.set(policy.scopeId, policy);
+      }
+    }
+
+    let goal = 0;
+    let superGoal = 0;
+    for (const sector of sectors) {
+      const p = latestBySector.get(sector.id);
+      if (!p) continue;
+      const meta = Number(p.metaDaily ?? 0);
+      const superMeta = p.supermetaDaily != null ? Number(p.supermetaDaily) : Math.ceil(meta * 1.3);
+      goal += meta;
+      superGoal += superMeta;
+    }
+
+    return { goal, superGoal };
+  }
+
   private daysInclusive(start: Date, end: Date) {
     return Math.floor((+end - +start) / 86400000) + 1;
   }
+
   private countWorkdaysInclusive(start: Date, end: Date) {
     let c = 0, d = new Date(start);
     while (d <= end) {
@@ -166,7 +225,7 @@ export class GoalsService {
       return { scopeType: GoalScope.EMPLOYEE, scopeId: q.employeeId };
     }
 
-        if (q.sectorId) {
+    if (q.sectorId) {
       if (user.role === 'STORE_MANAGER') {
         if (q.storeId && q.storeId !== user.storeId) throw new ForbiddenException('Setor fora do escopo da loja');
         const sec = await this.prisma.sector.findUnique({
@@ -231,14 +290,14 @@ export class GoalsService {
         if (!e || e.store.clientId !== user.clientId) throw new ForbiddenException('Funcionário fora do escopo do cliente');
         return;
       }
-            if (scopeType === 'SECTOR') {
-         const sec = await this.prisma.sector.findUnique({
-           where: { id: scopeId },
-           select: { store: { select: { clientId: true } } },
-         });
-         if (!sec || sec.store.clientId !== user.clientId)
-           throw new ForbiddenException('Setor fora do escopo do cliente');
-         return;
+      if (scopeType === 'SECTOR') {
+        const sec = await this.prisma.sector.findUnique({
+          where: { id: scopeId },
+          select: { store: { select: { clientId: true } } },
+        });
+        if (!sec || sec.store.clientId !== user.clientId)
+          throw new ForbiddenException('Setor fora do escopo do cliente');
+        return;
       }
     }
 
