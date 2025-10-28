@@ -1,25 +1,34 @@
-import { Transform } from 'class-transformer';
-import { IsEnum, IsString, Matches, IsUUID, IsIn } from 'class-validator';
-import { GoalScope } from '@prisma/client';
+/* eslint-disable prettier/prettier */
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsEnum, IsOptional, IsUUID, Matches } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export enum ReportScope {
+  SYSTEM = 'SYSTEM',    // todas as vendas (ADMIN)
+  CLIENT = 'CLIENT',    // por cliente  (id obrigatório)
+  STORE = 'STORE',      // por loja     (id obrigatório)
+  EMPLOYEE = 'EMPLOYEE' // por funcionário (id obrigatório)
+}
 
 export class GoalsVsSalesQuery {
-  // YYYY-MM-DD
-  @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
-  from!: string;
+  @ApiProperty({ enum: ReportScope })
+  @IsEnum(ReportScope)
+  scope!: ReportScope;
 
-  // YYYY-MM-DD
-  @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
-  to!: string;
-
-  @IsEnum(GoalScope)
-  scopeType!: GoalScope;
-
+  @ApiPropertyOptional({ description: 'Obrigatório para CLIENT/STORE/EMPLOYEE' })
+  @IsOptional()
   @IsUUID()
-  scopeId!: string;
+  id?: string;
 
-  @Transform(({ value }) => String(value).toLowerCase())
-  @IsIn(['daily', 'monthly'])
-  granularity!: 'daily' | 'monthly';
+  @ApiPropertyOptional({ example: '2025-10-01', description: 'Início (YYYY-MM-DD)' })
+  @IsOptional()
+  @Type(() => String)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'start deve ser YYYY-MM-DD' })
+  start?: string;
+
+  @ApiPropertyOptional({ example: '2025-10-31', description: 'Fim (YYYY-MM-DD)' })
+  @IsOptional()
+  @Type(() => String)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'end deve ser YYYY-MM-DD' })
+  end?: string;
 }

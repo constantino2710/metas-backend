@@ -1,31 +1,34 @@
-import { IsEnum, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
-import { Transform } from 'class-transformer';
+/* eslint-disable prettier/prettier */
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsEnum, IsOptional, IsUUID, Matches } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export enum SalesDailyScope {
-  SYSTEM = 'SYSTEM',
-  CLIENT = 'CLIENT',
-  STORE = 'STORE',
-  EMPLOYEE = 'EMPLOYEE',
+  SYSTEM = 'SYSTEM',    // agrupa por cliente
+  CLIENT = 'CLIENT',    // agrupa por loja
+  STORE = 'STORE',      // agrupa por funcionário
+  EMPLOYEE = 'EMPLOYEE' // série única (o próprio funcionário)
 }
 
 export class SalesDailyQueryDto {
-  // Normaliza para MAIÚSCULAS (ex.: "system" -> "SYSTEM")
-  @Transform(({ value }) => String(value).toUpperCase())
+  @ApiProperty({ enum: SalesDailyScope })
   @IsEnum(SalesDailyScope)
   scope!: SalesDailyScope;
 
-  // obrigatório para CLIENT/STORE/EMPLOYEE
+  @ApiPropertyOptional({ description: 'ID exigido para CLIENT/STORE/EMPLOYEE' })
   @IsOptional()
   @IsUUID()
   id?: string;
 
-  // YYYY-MM-DD
-  @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
-  start!: string;
+  @ApiPropertyOptional({ example: '2025-10-01', description: 'Início (YYYY-MM-DD)' })
+  @IsOptional()
+  @Type(() => String)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'start deve ser YYYY-MM-DD' })
+  start?: string;
 
-  // YYYY-MM-DD
-  @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/)
-  end!: string;
+  @ApiPropertyOptional({ example: '2025-10-31', description: 'Fim (YYYY-MM-DD)' })
+  @IsOptional()
+  @Type(() => String)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'end deve ser YYYY-MM-DD' })
+  end?: string;
 }

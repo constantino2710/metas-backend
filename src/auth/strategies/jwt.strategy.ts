@@ -1,12 +1,21 @@
-/* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/require-await */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable prettier/prettier */
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import * as types from '../types';
+import { JwtUser, Role } from '../types';
+
+type JwtPayload = {
+  sub: string;                // user.id
+  role: Role | string;
+  clientId?: string | null;
+  storeId?: string | null;
+  iat?: number;
+  exp?: number;
+};
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -14,22 +23,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET!, // defina JWT_SECRET no .env
+      secretOrKey: process.env.JWT_SECRET,
     });
   }
 
-  /**
-   * Converte o payload do token (que traz `sub`) para o objeto JwtUser esperado
-   * pelos guards (@CurrentUser etc.), com `id`.
-   */
-  async validate(payload: any): Promise<types.JwtUser> {
+  async validate(payload: JwtPayload): Promise<JwtUser> {
     return {
-      id: payload.sub ?? payload.id,   // ← MAPEIA sub → id
-      sub: payload.sub,                // adiciona o campo sub
-      email: payload.email,
-      role: payload.role,
-      clientId: payload.clientId,
-      storeId: payload.storeId,
+      id: payload.sub,                      // mapeia sub -> id
+      role: payload.role as Role,
+      clientId: payload.clientId ?? null,
+      storeId: payload.storeId ?? null,
+      iat: payload.iat,
+      exp: payload.exp,
     };
   }
 }

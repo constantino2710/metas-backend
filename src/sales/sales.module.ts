@@ -1,11 +1,14 @@
+/* eslint-disable prettier/prettier */
 import { Module } from '@nestjs/common';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 import { PrismaService } from '../database/prisma.service';
-import { GoalResolverService } from '../goals/goal-resolver.service';
+import { GoalsModule } from '../goals/goals.module';
 
 @Module({
+  imports: [GoalsModule],                 // <— importa quem exporta GoalResolverService
   controllers: [SalesController],
-  providers: [SalesService, PrismaService, GoalResolverService],
+  providers: [PrismaService, SalesService],
+  exports: [SalesService],
 })
 export class SalesModule {}

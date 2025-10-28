@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-enum-comparison */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable prettier/prettier */
@@ -13,7 +14,9 @@ import { PrismaService } from '../database/prisma.service';
 import * as types from '../auth/types';
 import { CreateSaleDto } from './dtos/create-sale.dto';
 import { SalesListQueryDto } from './dtos/sales-list.query.dto';
-import { SalesDailyQueryDto, SalesDailyScope } from './dtos/sales-daily.query.dto';
+import { SalesDailyQueryDto } from './dtos/sales-daily.query.dto';
+// import SalesDailyScope from the correct location or fix the export in the DTO file
+import { SalesDailyScope } from './dtos/sales-daily.query.dto'; // Ensure SalesDailyScope is exported in the DTO file
 import { SalesSetDailyDto } from './dtos/sales-set-daily.dto';
 import { GoalResolverService } from '../goals/goal-resolver.service';
 

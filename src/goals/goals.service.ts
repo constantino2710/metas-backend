@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable prefer-const */
@@ -11,7 +12,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
-import * as types from '../auth/types';
+import { JwtUser, Role } from '../auth/types';
 import { GoalScope } from '@prisma/client';
 import { GoalsEffectiveQueryDto } from './dtos/goals-effective.query.dto';
 import { CreateGoalDto } from './dtos/create-goal.dto';
@@ -20,23 +21,59 @@ import { CreateGoalDto } from './dtos/create-goal.dto';
 export class GoalsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Retorna a meta diária e a super meta diária vigentes na data/escopo.
-   * - employeeId > sectorId > storeId > clientId
-   */
-  async effective(user: types.JwtUser, q: GoalsEffectiveQueryDto) {
-    const dateStr = q.date ?? new Date().toISOString().slice(0, 10);
+  private ensureUser(user?: JwtUser): asserts user is JwtUser {
+    if (!user || typeof (user as any).role !== 'string') {
+      throw new ForbiddenException('Usuário não autenticado');
+    }
+  }
 
+  async getEffective(user: JwtUser, q: GoalsEffectiveQueryDto) {
+    this.ensureUser(user);
+    return this.effective(user, q);
+  }
+
+  async effective(user: JwtUser, q: GoalsEffectiveQueryDto) {
+    this.ensureUser(user);
+
+    const dateStr = q.date ?? new Date().toISOString().slice(0, 10);
+    const date = new Date(dateStr + 'T00:00:00.000Z');
+    if (Number.isNaN(+date)) {
+      throw new BadRequestException('Data inválida (YYYY-MM-DD)');
+    }
+
+    const daysInMonth = this.daysInMonth(date);
     const { scopeType, scopeId } = await this.resolveScope(user, q);
 
-    // Caso seja loja sem escopo menor, soma metas dos setores
     if (scopeType === GoalScope.STORE) {
-      const { goal, superGoal } = await this.sumStoreGoals(scopeId, dateStr);
+      const aggregated = await this.sumStoreGoals(scopeId, date);
+      if (!aggregated) {
+        return {
+          scopeType,
+          scopeId,
+          goal: undefined,
+          superGoal: undefined,
+          metaDaily: undefined,
+          superDaily: undefined,
+          metaMonth: undefined,
+          supermetaMonth: undefined,
+          period: { start: undefined, end: dateStr },
+        };
+      }
+
+      const metaDaily = aggregated.goal;
+      const superDaily = aggregated.superGoal;
+      const metaMonth = Math.round(metaDaily * daysInMonth);
+      const supermetaMonth = Math.round(superDaily * daysInMonth);
+
       return {
         scopeType,
         scopeId,
-        goal,
-        superGoal,
+        goal: metaDaily,
+        superGoal: superDaily,
+        metaDaily,
+        superDaily,
+        metaMonth,
+        supermetaMonth,
         period: { start: undefined, end: dateStr },
       };
     }
@@ -45,7 +82,7 @@ export class GoalsService {
       where: {
         scopeType,
         scopeId,
-        effectiveFrom: { lte: new Date(dateStr + 'T00:00:00.000Z') },
+        effectiveFrom: { lte: date },
       },
       orderBy: { effectiveFrom: 'desc' },
       select: { metaDaily: true, supermetaDaily: true, effectiveFrom: true },
@@ -57,15 +94,38 @@ export class GoalsService {
         scopeId,
         goal: undefined,
         superGoal: undefined,
+        metaDaily: undefined,
+        superDaily: undefined,
+        metaMonth: undefined,
+        supermetaMonth: undefined,
         period: { start: undefined, end: dateStr },
       };
     }
 
+    const metaDaily =
+      policy.metaDaily !== null && policy.metaDaily !== undefined
+        ? Number(policy.metaDaily)
+        : undefined;
+
+    let superDaily: number | undefined;
+    if (policy.supermetaDaily !== null && policy.supermetaDaily !== undefined) {
+      superDaily = Number(policy.supermetaDaily);
+    } else if (metaDaily !== undefined) {
+      superDaily = Math.ceil(metaDaily * 1.3);
+    }
+
+    const metaMonth = metaDaily ? Math.round(metaDaily * daysInMonth) : undefined;
+    const supermetaMonth = superDaily ? Math.round(superDaily * daysInMonth) : undefined;
+
     return {
       scopeType,
       scopeId,
-      goal: Number(policy.metaDaily),
-      superGoal: Number(policy.supermetaDaily),
+      goal: metaDaily,
+      superGoal: superDaily,
+      metaDaily,
+      superDaily,
+      metaMonth,
+      supermetaMonth,
       period: {
         start: policy.effectiveFrom.toISOString().slice(0, 10),
         end: dateStr,
@@ -73,18 +133,15 @@ export class GoalsService {
     };
   }
 
-  /**
-   * Cria/atualiza política de meta.
-   * - Aceita meta diária OU mensal; se vier mensal, converte para diária.
-   * - Se não vier super meta, calcula automaticamente por percentual (padrão 30%).
-   * - Pode dividir por dias úteis se `workdaysOnly=true`.
-   */
-  async create(user: types.JwtUser, dto: CreateGoalDto) {
+  async create(user: JwtUser, dto: CreateGoalDto) {
+    this.ensureUser(user);
+
     await this.assertCreateScope(user, dto.scopeType, dto.scopeId);
 
-    // Bloqueia criação direta de metas para lojas
     if (dto.scopeType === GoalScope.STORE) {
-      throw new BadRequestException('Metas diárias devem ser definidas por setor. Cadastre setores para a loja.');
+      throw new BadRequestException(
+        'Metas diárias devem ser definidas por setor. Cadastre setores para a loja.',
+      );
     }
 
     const effectiveFrom = new Date(dto.effectiveFrom + 'T00:00:00.000Z');
@@ -92,12 +149,16 @@ export class GoalsService {
       throw new BadRequestException('effectiveFrom inválido (YYYY-MM-DD)');
     }
 
-    // utilitários de dias
-    const monthStart = new Date(Date.UTC(effectiveFrom.getUTCFullYear(), effectiveFrom.getUTCMonth(), 1));
-    const monthEnd   = new Date(Date.UTC(effectiveFrom.getUTCFullYear(), effectiveFrom.getUTCMonth() + 1, 0));
-    const totalDays  = dto.workdaysOnly ? this.countWorkdaysInclusive(monthStart, monthEnd) : this.daysInclusive(monthStart, monthEnd);
+    const monthStart = new Date(
+      Date.UTC(effectiveFrom.getUTCFullYear(), effectiveFrom.getUTCMonth(), 1),
+    );
+    const monthEnd = new Date(
+      Date.UTC(effectiveFrom.getUTCFullYear(), effectiveFrom.getUTCMonth() + 1, 0),
+    );
+    const totalDays = dto.workdaysOnly
+      ? this.countWorkdaysInclusive(monthStart, monthEnd)
+      : this.daysInclusive(monthStart, monthEnd);
 
-    // meta diária
     let metaDaily = dto.metaDaily;
     if (metaDaily === undefined) {
       if (dto.metaMonthly === undefined) {
@@ -106,13 +167,12 @@ export class GoalsService {
       metaDaily = Math.ceil(Number(dto.metaMonthly) / Math.max(totalDays, 1));
     }
 
-    // super meta diária
     let supermetaDaily = dto.supermetaDaily;
     if (supermetaDaily === undefined) {
       if (dto.supermetaMonthly !== undefined) {
         supermetaDaily = Math.ceil(Number(dto.supermetaMonthly) / Math.max(totalDays, 1));
       } else {
-        const superPercent = dto.superPercent ?? 30; // default 30%
+        const superPercent = dto.superPercent ?? 30;
         supermetaDaily = Math.ceil(Number(metaDaily) * (1 + superPercent / 100));
       }
     }
@@ -124,15 +184,18 @@ export class GoalsService {
         metaDaily,
         supermetaDaily,
         effectiveFrom,
-        createdBy: (user as any)?.id ?? null,
       },
       select: {
-        id: true, scopeType: true, scopeId: true, effectiveFrom: true,
-        metaDaily: true, supermetaDaily: true,
+        id: true,
+        scopeType: true,
+        scopeId: true,
+        effectiveFrom: true,
+        metaDaily: true,
+        supermetaDaily: true,
       },
     });
 
-    const metaMonth      = Math.round(Number(metaDaily)      * totalDays);
+    const metaMonth = Math.round(Number(metaDaily) * totalDays);
     const superMetaMonth = Math.round(Number(supermetaDaily) * totalDays);
 
     return {
@@ -148,21 +211,23 @@ export class GoalsService {
 
   // ---------- helpers ----------
 
-  private async sumStoreGoals(storeId: string, dateStr: string) {
+  private async sumStoreGoals(storeId: string, date: Date) {
     const sectors = await this.prisma.sector.findMany({
-      where: { storeId, isActive: true },
+      where: { storeId },
       select: { id: true },
     });
 
     if (sectors.length === 0) {
-      throw new BadRequestException('Loja sem setores. Cadastre um setor antes de definir metas.');
+      throw new BadRequestException(
+        'Loja sem setores. Cadastre um setor antes de definir metas.',
+      );
     }
 
     const policies = await this.prisma.goalPolicy.findMany({
       where: {
         scopeType: GoalScope.SECTOR,
-        scopeId: { in: sectors.map(s => s.id) },
-        effectiveFrom: { lte: new Date(dateStr + 'T00:00:00.000Z') },
+        scopeId: { in: sectors.map((s) => s.id) },
+        effectiveFrom: { lte: date },
       },
       orderBy: { effectiveFrom: 'desc' },
     });
@@ -176,15 +241,20 @@ export class GoalsService {
 
     let goal = 0;
     let superGoal = 0;
+    let found = false;
+
     for (const sector of sectors) {
       const p = latestBySector.get(sector.id);
       if (!p) continue;
       const meta = Number(p.metaDaily ?? 0);
-      const superMeta = p.supermetaDaily != null ? Number(p.supermetaDaily) : Math.ceil(meta * 1.3);
+      const superMeta =
+        p.supermetaDaily != null ? Number(p.supermetaDaily) : Math.ceil(meta * 1.3);
       goal += meta;
       superGoal += superMeta;
+      found = true;
     }
 
+    if (!found) return null;
     return { goal, superGoal };
   }
 
@@ -192,20 +262,30 @@ export class GoalsService {
     return Math.floor((+end - +start) / 86400000) + 1;
   }
 
+  private daysInMonth(date: Date) {
+    const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+    const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
+    return this.daysInclusive(start, end);
+  }
+
   private countWorkdaysInclusive(start: Date, end: Date) {
     let c = 0, d = new Date(start);
     while (d <= end) {
-      const wd = d.getUTCDay(); // 0..6 (dom..sáb)
+      const wd = d.getUTCDay();
       if (wd !== 0 && wd !== 6) c++;
       d.setUTCDate(d.getUTCDate() + 1);
     }
     return c;
   }
 
-  /** Valida/resolve escopo do effective() e aplica RBAC */
-  private async resolveScope(user: types.JwtUser, q: GoalsEffectiveQueryDto) {
+  /** <<< CORRIGIDO contra TS2367 >>> */
+  private async resolveScope(user: JwtUser, q: GoalsEffectiveQueryDto) {
+    this.ensureUser(user);
+    const role = user.role as Role; // evita narrowing problemático
+
+    // 1) funcionário
     if (q.employeeId) {
-      if (user.role === 'STORE_MANAGER') {
+      if (role === Role.STORE_MANAGER) {
         const emp = await this.prisma.employee.findUnique({
           where: { id: q.employeeId },
           select: { storeId: true },
@@ -213,7 +293,7 @@ export class GoalsService {
         if (!emp || emp.storeId !== user.storeId) {
           throw new ForbiddenException('Funcionário fora do escopo da loja');
         }
-      } else if (user.role === 'CLIENT_ADMIN') {
+      } else if (role === Role.CLIENT_ADMIN) {
         const emp = await this.prisma.employee.findUnique({
           where: { id: q.employeeId },
           select: { store: { select: { clientId: true } } },
@@ -225,15 +305,18 @@ export class GoalsService {
       return { scopeType: GoalScope.EMPLOYEE, scopeId: q.employeeId };
     }
 
+    // 2) setor
     if (q.sectorId) {
-      if (user.role === 'STORE_MANAGER') {
-        if (q.storeId && q.storeId !== user.storeId) throw new ForbiddenException('Setor fora do escopo da loja');
+      if (role === Role.STORE_MANAGER) {
+        if (q.storeId && q.storeId !== user.storeId)
+          throw new ForbiddenException('Setor fora do escopo da loja');
         const sec = await this.prisma.sector.findUnique({
           where: { id: q.sectorId },
           select: { storeId: true },
         });
-        if (!sec || sec.storeId !== user.storeId) throw new ForbiddenException('Setor fora do escopo da loja');
-      } else if (user.role === 'CLIENT_ADMIN') {
+        if (!sec || sec.storeId !== user.storeId)
+          throw new ForbiddenException('Setor fora do escopo da loja');
+      } else if (role === Role.CLIENT_ADMIN) {
         const sec = await this.prisma.sector.findUnique({
           where: { id: q.sectorId },
           select: { store: { select: { clientId: true } } },
@@ -244,60 +327,105 @@ export class GoalsService {
       return { scopeType: GoalScope.SECTOR, scopeId: q.sectorId };
     }
 
+    // 3) loja
     if (q.storeId) {
-      if (user.role === 'STORE_MANAGER') {
-        if (q.storeId !== user.storeId) throw new ForbiddenException('Loja fora do escopo do usuário');
-      } else if (user.role === 'CLIENT_ADMIN') {
+      if (role === Role.STORE_MANAGER) {
+        if (q.storeId !== user.storeId)
+          throw new ForbiddenException('Loja fora do escopo do usuário');
+      } else if (role === Role.CLIENT_ADMIN) {
         const store = await this.prisma.store.findUnique({
           where: { id: q.storeId },
           select: { clientId: true },
         });
-        if (!store || store.clientId !== user.clientId) throw new ForbiddenException('Loja fora do escopo do cliente');
+        if (!store || store.clientId !== user.clientId)
+          throw new ForbiddenException('Loja fora do escopo do cliente');
       }
       return { scopeType: GoalScope.STORE, scopeId: q.storeId };
     }
 
-    if (!q.clientId) throw new NotFoundException('Informe clientId, storeId, sectorId ou employeeId');
-    if (user.role === 'CLIENT_ADMIN' && q.clientId !== user.clientId) {
-      throw new ForbiddenException('Cliente fora do escopo do usuário');
+    // 3.1) fallback para gerente de loja
+    if (role === Role.STORE_MANAGER) {
+      if (!user.storeId) throw new ForbiddenException('Usuário de loja sem storeId associado');
+      return { scopeType: GoalScope.STORE, scopeId: user.storeId };
     }
-    if (user.role === 'STORE_MANAGER') {
-      throw new ForbiddenException('STORE_MANAGER não pode consultar por clientId');
+
+    // 4) cliente
+    if (!q.clientId)
+      throw new NotFoundException('Informe clientId, storeId, sectorId ou employeeId');
+
+    if (role === Role.CLIENT_ADMIN && q.clientId !== user.clientId) {
+      throw new ForbiddenException('Cliente fora do escopo do usuário');
     }
 
     return { scopeType: GoalScope.CLIENT, scopeId: q.clientId };
   }
 
-  /** RBAC para criação de metas (CLIENT_ADMIN só dentro do próprio cliente) */
-  private async assertCreateScope(user: types.JwtUser, scopeType: GoalScope, scopeId: string) {
-    if (user.role === 'ADMIN') return;
+  /** RBAC de criação com switch (sem TS2367) */
+  private async assertCreateScope(user: JwtUser, scopeType: GoalScope, scopeId: string) {
+    this.ensureUser(user);
 
-    if (user.role === 'CLIENT_ADMIN') {
-      if (scopeType === 'CLIENT') {
-        if (scopeId !== user.clientId) throw new ForbiddenException('Fora do escopo do cliente');
+    switch (user.role) {
+      case Role.ADMIN:
         return;
+
+      case Role.STORE_MANAGER: {
+        if (scopeType === GoalScope.SECTOR) {
+          const sec = await this.prisma.sector.findUnique({
+            where: { id: scopeId },
+            select: { storeId: true },
+          });
+          if (!sec || sec.storeId !== user.storeId)
+            throw new ForbiddenException('Setor fora do escopo da loja');
+          return;
+        }
+        if (scopeType === GoalScope.EMPLOYEE) {
+          const emp = await this.prisma.employee.findUnique({
+            where: { id: scopeId },
+            select: { storeId: true },
+          });
+          if (!emp || emp.storeId !== user.storeId)
+            throw new ForbiddenException('Funcionário fora do escopo da loja');
+          return;
+        }
+        throw new ForbiddenException(
+          'STORE_MANAGER só pode definir metas de SETOR ou EMPLOYEE da própria loja',
+        );
       }
-      if (scopeType === 'STORE') {
-        const s = await this.prisma.store.findUnique({ where: { id: scopeId }, select: { clientId: true } });
-        if (!s || s.clientId !== user.clientId) throw new ForbiddenException('Loja fora do escopo do cliente');
-        return;
-      }
-      if (scopeType === 'EMPLOYEE') {
-        const e = await this.prisma.employee.findUnique({
-          where: { id: scopeId },
-          select: { store: { select: { clientId: true } } },
-        });
-        if (!e || e.store.clientId !== user.clientId) throw new ForbiddenException('Funcionário fora do escopo do cliente');
-        return;
-      }
-      if (scopeType === 'SECTOR') {
-        const sec = await this.prisma.sector.findUnique({
-          where: { id: scopeId },
-          select: { store: { select: { clientId: true } } },
-        });
-        if (!sec || sec.store.clientId !== user.clientId)
-          throw new ForbiddenException('Setor fora do escopo do cliente');
-        return;
+
+      case Role.CLIENT_ADMIN: {
+        if (scopeType === GoalScope.CLIENT) {
+          if (scopeId !== user.clientId)
+            throw new ForbiddenException('Fora do escopo do cliente');
+          return;
+        }
+        if (scopeType === GoalScope.STORE) {
+          const s = await this.prisma.store.findUnique({
+            where: { id: scopeId },
+            select: { clientId: true },
+          });
+          if (!s || s.clientId !== user.clientId)
+            throw new ForbiddenException('Loja fora do escopo do cliente');
+          return;
+        }
+        if (scopeType === GoalScope.EMPLOYEE) {
+          const e = await this.prisma.employee.findUnique({
+            where: { id: scopeId },
+            select: { store: { select: { clientId: true } } },
+          });
+          if (!e || e.store.clientId !== user.clientId)
+            throw new ForbiddenException('Funcionário fora do escopo do cliente');
+          return;
+        }
+        if (scopeType === GoalScope.SECTOR) {
+          const sec = await this.prisma.sector.findUnique({
+            where: { id: scopeId },
+            select: { store: { select: { clientId: true } } },
+          });
+          if (!sec || sec.store.clientId !== user.clientId)
+            throw new ForbiddenException('Setor fora do escopo do cliente');
+          return;
+        }
+        break;
       }
     }
 

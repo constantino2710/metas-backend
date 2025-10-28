@@ -1,38 +1,38 @@
+/* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable prettier/prettier */
-/* eslint-disable @typescript-eslint/no-unsafe-call */
-import { Body, Controller, Get, Patch, Param, Query, UseGuards, ForbiddenException } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from '../rbac/roles.guard';
-import { Roles } from '../rbac/roles.decorator';
+import { Controller, Get, Query } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service';
+import { Prisma } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import * as types from '../auth/types';
 
-@ApiTags('stores')
-@ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('stores')
+@Controller('tenants/stores')
 export class StoresController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
-  @Roles('ADMIN', 'CLIENT_ADMIN')
-  async list(@CurrentUser() user: types.JwtUser, @Query('clientId') clientId?: string) {
-    const where = user.role === 'ADMIN' ? { clientId } : { clientId: user.clientId };
-    return this.prisma.store.findMany({ where, orderBy: { createdAt: 'desc' } });
-  }
+  async list(@CurrentUser() user: types.JwtUser, @Query() q: any) {
+    const where: Prisma.StoreWhereInput = {};
 
-  @Patch(':id')
-  @Roles('ADMIN', 'CLIENT_ADMIN', 'STORE_MANAGER')
-  async update(@Param('id') id: string, @Body() dto: { name?: string }, @CurrentUser() user: types.JwtUser) {
-    if (user.role === 'STORE_MANAGER' && user.storeId !== id) {
-      throw new ForbiddenException('Store scope mismatch');
+    if (q?.name) where.name = { contains: String(q.name), mode: 'insensitive' };
+
+    // filtro opcional por clientId via query
+    if (q?.clientId) {
+      where.clientId = String(q.clientId);
     }
-    if (user.role === 'CLIENT_ADMIN') {
-      const store = await this.prisma.store.findUnique({ where: { id } });
-      if (!store || store.clientId !== user.clientId) throw new ForbiddenException('Client scope mismatch');
+
+    // escopo do CLIENT_ADMIN (apenas se houver clientId string não-vazia)
+    if (user.role === types.Role.CLIENT_ADMIN && typeof user.clientId === 'string' && user.clientId) {
+      // importante: nunca atribuir null/undefined — somente string
+      where.clientId = user.clientId as string;
+      // alternativa estruturada:
+      // where.clientId = { equals: user.clientId as string };
     }
-    return this.prisma.store.update({ where: { id }, data: { ...dto } });
+
+    return this.prisma.store.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
   }
 }

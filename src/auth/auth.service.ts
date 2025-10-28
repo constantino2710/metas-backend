@@ -8,11 +8,26 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
 import { LoginDto } from './dtos/login.dto';
-import { JwtUser } from './types';
+import { Role } from './types';
 import * as crypto from 'crypto';
 import * as nodemailer from 'nodemailer';
 
 type Tokens = { accessToken: string; refreshToken: string };
+
+/** Payload do ACCESS token — consumido pelo JwtStrategy */
+type AccessPayload = {
+  sub: string;                        // user.id
+  role: Role | string;                // mantemos string pra tolerar dados legacy
+  clientId?: string | null;
+  storeId?: string | null;
+};
+
+/** Payload do REFRESH token — validado apenas aqui no AuthService */
+type RefreshPayload = {
+  sub: string;
+  email: string;
+  tokenType: 'refresh';
+};
 
 @Injectable()
 export class AuthService {
@@ -23,15 +38,16 @@ export class AuthService {
   ) {}
 
   private signAccess(user: {
-    id: string; email: string; role: string; clientId?: string | null; storeId?: string | null;
+    id: string;
+    role: string;
+    clientId?: string | null;
+    storeId?: string | null;
   }): string {
-    const payload: JwtUser = {
+    const payload: AccessPayload = {
       sub: user.id,
-      email: user.email,
-      role: user.role as JwtUser['role'],
-      clientId: user.clientId ?? undefined,
-      storeId: user.storeId ?? undefined,
-      id: undefined,
+      role: user.role as Role,
+      clientId: user.clientId ?? null,
+      storeId: user.storeId ?? null,
     };
     return this.jwt.sign(payload, {
       secret: this.cfg.get<string>('JWT_SECRET'),
@@ -40,7 +56,11 @@ export class AuthService {
   }
 
   private signRefresh(user: { id: string; email: string }): string {
-    const payload = { sub: user.id, email: user.email, tokenType: 'refresh' as const };
+    const payload: RefreshPayload = {
+      sub: user.id,
+      email: user.email,
+      tokenType: 'refresh',
+    };
     return this.jwt.sign(payload, {
       secret: this.cfg.get<string>('REFRESH_SECRET'),
       expiresIn: this.cfg.get<string>('REFRESH_EXPIRES_IN') ?? '7d',
@@ -48,7 +68,11 @@ export class AuthService {
   }
 
   private tokens(user: {
-    id: string; email: string; role: string; clientId?: string | null; storeId?: string | null;
+    id: string;
+    email: string;
+    role: string;
+    clientId?: string | null;
+    storeId?: string | null;
   }): Tokens {
     return {
       accessToken: this.signAccess(user),
@@ -56,19 +80,39 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginDto): Promise<Tokens & {
-    user: { id: string; email: string; role: string; clientId?: string | null; storeId?: string | null }
-  }> {
+  async login(
+    dto: LoginDto,
+  ): Promise<
+    Tokens & {
+      user: {
+        id: string;
+        email: string;
+        role: string;
+        clientId?: string | null;
+        storeId?: string | null;
+      };
+    }
+  > {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      select: { id: true, email: true, passwordHash: true, role: true, clientId: true, storeId: true, isActive: true },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true,
+        role: true,
+        clientId: true,
+        storeId: true,
+        isActive: true,
+      },
     });
+
     if (!user || !user.isActive) throw new UnauthorizedException('Credenciais inválidas');
 
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) throw new UnauthorizedException('Credenciais inválidas');
 
     const { accessToken, refreshToken } = this.tokens(user);
+
     return {
       accessToken,
       refreshToken,
@@ -76,23 +120,29 @@ export class AuthService {
         id: user.id,
         email: user.email,
         role: user.role,
-        clientId: user.clientId ?? undefined,
-        storeId: user.storeId ?? undefined,
+        clientId: user.clientId ?? null,
+        storeId: user.storeId ?? null,
       },
     };
   }
 
   async refresh(refreshToken: string): Promise<Tokens> {
     try {
-      const decoded = await this.jwt.verifyAsync<{ sub: string; email: string; tokenType: string }>(
-        refreshToken,
-        { secret: this.cfg.get<string>('REFRESH_SECRET') },
-      );
+      const decoded = await this.jwt.verifyAsync<RefreshPayload>(refreshToken, {
+        secret: this.cfg.get<string>('REFRESH_SECRET'),
+      });
       if (decoded.tokenType !== 'refresh') throw new Error('invalid type');
 
       const user = await this.prisma.user.findUnique({
         where: { id: decoded.sub },
-        select: { id: true, email: true, role: true, clientId: true, storeId: true, isActive: true },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          clientId: true,
+          storeId: true,
+          isActive: true,
+        },
       });
       if (!user || !user.isActive) throw new UnauthorizedException('Usuário inativo');
 
@@ -120,7 +170,8 @@ export class AuthService {
     const userAuth = this.cfg.get<string>('MAIL_USER')!;
     const passAuth = this.cfg.get<string>('MAIL_PASS')!;
     const from = this.cfg.get<string>('MAIL_FROM') ?? `"Suporte" <${userAuth}>`;
-    const secure = String(this.cfg.get<string>('MAIL_SECURE') ?? '').toLowerCase() === 'true'; // se usar 465
+    const secure =
+      String(this.cfg.get<string>('MAIL_SECURE') ?? '').toLowerCase() === 'true'; // true p/ 465
 
     const transporter = nodemailer.createTransport({
       host,
@@ -130,7 +181,7 @@ export class AuthService {
     });
 
     const urlBase = this.cfg.get<string>('FRONTEND_RESET_PASSWORD_URL') ?? '';
-        let url: string;
+    let url: string;
     try {
       const built = new URL(urlBase);
       built.searchParams.set('token', token);
@@ -154,10 +205,7 @@ export class AuthService {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const user = await this.prisma.user.findFirst({
       where: {
-                OR: [
-          { resetTokenHash: tokenHash },
-          { resetTokenHash: token },
-        ],
+        OR: [{ resetTokenHash: tokenHash }, { resetTokenHash: token }],
         resetTokenExpires: { gt: new Date() },
       },
     });
@@ -169,5 +217,4 @@ export class AuthService {
       data: { passwordHash, resetTokenHash: null, resetTokenExpires: null },
     });
   }
-  
 }
