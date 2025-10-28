@@ -3,9 +3,14 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable prettier/prettier */
+
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import type { Request } from 'express';
+
+import { extractCookie } from '../../common/utils/cookie.utils';
 import { JwtUser, Role } from '../types';
 
 type JwtPayload = {
@@ -19,11 +24,15 @@ type JwtPayload = {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor() {
+  constructor(private readonly cfg: ConfigService) {
+    const fromBearer = ExtractJwt.fromAuthHeaderAsBearerToken();
+    const fromCookies = (req: Request): string | null =>
+      extractCookie(req, 'accessToken', 'access_token', 'authorization');
+
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      jwtFromRequest: ExtractJwt.fromExtractors([fromBearer, fromCookies]),
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET,
+      secretOrKey: cfg.getOrThrow<string>('JWT_SECRET'),
     });
   }
 
